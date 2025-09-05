@@ -4,9 +4,12 @@
   "description": "Backend server for Scribe - Real-time audio translation app",
   "main": "server.js",
   "scripts": {
-    "start": "NODE_ENV=prod node server.js",
-    "dev": "NODE_ENV=dev nodemon server.js",
-    "staging": "NODE_ENV=staging node server.js",
+    "start": "NODE_ENV=prod DB_HOST=https://api.scribe-ai.ca DB_USER=scribe-user DB_PASSWORD='3557321Joh--' DB_NAME=scribe-prod DB_SSL=true node server.js",
+    "dev": "NODE_ENV=dev DB_HOST=localhost DB_USER=johnascott DB_PASSWORD= DB_NAME=scribe-dev DB_SSL=false nodemon server.js",
+    "staging": "NODE_ENV=staging DB_HOST=34.47.41.143 DB_USER=scribe-user DB_PASSWORD='3557321Joh--' DB_NAME=scribe-staging DB_SSL=true node server.js",
+    "migrate": "node migrate.js",
+    "migrate:status": "node migrate.js --status",
+    "create-migration": "node create-migration.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "kill": "pkill -f 'node'"
   },

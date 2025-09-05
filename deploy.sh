@@ -22,8 +22,9 @@ gcloud services enable cloudbuild.googleapis.com
 gcloud services enable run.googleapis.com
 gcloud services enable containerregistry.googleapis.com
 
-# Submit build to Cloud Build
-echo "🔨 Building and deploying..."
+# Submit build to Cloud Build (will get env vars from Cloud Run service)
+echo "🔨 Building and deploying with database migrations..."
+echo "📊 Will use environment variables from existing Cloud Run service"
 gcloud builds submit --config cloudbuild.yaml --project $PROJECT_ID
 
 # Get the service URL
@@ -45,3 +46,13 @@ echo "   - JWT_SECRET"
 echo "   - AZURE_TRANSLATOR_KEY" 
 echo "   - AZURE_TRANSLATOR_REGION"
 echo "   - CORS_ORIGIN (your frontend domains)"
+echo "   - DB_HOST (your Cloud SQL public IP)"
+echo "   - DB_PASSWORD (your database password)"
+echo ""
+echo "💡 Database variables are automatically retrieved from your Cloud Run service"
+echo "   Make sure to set these in Cloud Run console first:"
+echo "   - DB_HOST (your Cloud SQL public IP)"
+echo "   - DB_PASSWORD (your database password)"
+echo "   - DB_PORT (5432)"
+echo "   - DB_NAME (scribe_prod)"
+echo "   - DB_USER (scribe_user)"

@@ -4,8 +4,13 @@ module.exports = {
   HOST: '0.0.0.0',
   
   // Database
-  DB_TYPE: 'sqlite',
-  DB_PATH: './data/scribe-dev.db',
+  DB_TYPE: 'postgres',
+  DB_HOST: process.env.DB_HOST || 'localhost',
+  DB_PORT: process.env.DB_PORT || 5432,
+  DB_NAME: process.env.DB_NAME || 'scribe_dev',
+  DB_USER: process.env.DB_USER || 'postgres',
+  DB_PASSWORD: process.env.DB_PASSWORD || 'password',
+  DB_SSL: process.env.DB_SSL || 'false',
   
   // JWT Configuration
   JWT_SECRET: 'dev-super-secret-jwt-key-change-this-in-production',

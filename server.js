@@ -9,23 +9,42 @@ const config = require('./config')
 const { getSupportedLanguages } = require('./azureLangs')
 const { authenticateToken, authenticateSocket } = require('./middleware/auth')
 const authRoutes = require('./routes/auth')
-const { initDatabase } = require('./config/database')
+
+// Debug: Log environment variables
+console.log('🔍 Environment variables debug:');
+console.log('  NODE_ENV:', process.env.NODE_ENV);
+console.log('  DB_HOST:', process.env.DB_HOST);
+console.log('  DB_NAME:', process.env.DB_NAME);
+console.log('  DB_USER:', process.env.DB_USER);
+console.log('  DB_PASSWORD:', process.env.DB_PASSWORD ? '[SET]' : '[NOT SET]');
+console.log('  All DB_ variables:', Object.keys(process.env).filter(key => key.startsWith('DB_')));
+
+// Import PostgreSQL database module
+const { initDatabase } = require('./config/database-postgres');
 
 const app = express()
 const server = http.createServer(app)
 
+// Debug CORS configuration
+console.log('🔍 CORS Configuration Debug:');
+console.log('  CORS_ORIGIN:', config.CORS_ORIGIN);
+console.log('  Split origins:', config.CORS_ORIGIN.split(','));
+
 app.use(cors({
-  origin: config.CORS_ORIGIN.split(','),
+  origin: config.CORS_ORIGIN.split(',').map(origin => origin.trim()),
   methods: ["GET", "POST", "OPTIONS"],
-  credentials: true
+  credentials: true,
+  allowedHeaders: ["Content-Type", "Authorization"],
+  optionsSuccessStatus: 200
 }))
 
 const io = socketIo(server, {
   cors: {
-    origin: config.CORS_ORIGIN.split(','),
-    methods: ["GET", "POST"],
+    origin: true, // Allow all origins for socket connections
+    methods: ["GET", "POST", "OPTIONS"],
     credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization"]
+    allowedHeaders: ["Content-Type", "Authorization"],
+    optionsSuccessStatus: 200
   },
   transports: ['websocket', 'polling'],
   allowEIO3: true
@@ -502,8 +521,6 @@ const startServer = async () => {
     // Start server
     server.listen(config.PORT, config.HOST, () => {
       console.log(`🚀 Server running on ${config.HOST}:${config.PORT}`)
-      console.log(`🎤 Input Client: http://localhost:5173`)
-      console.log(`🌍 Translation Client: http://localhost:5174`)
     })
   } catch (error) {
     console.error('Failed to start server:', error)

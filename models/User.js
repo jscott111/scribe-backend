@@ -1,5 +1,5 @@
 const bcrypt = require('bcrypt');
-const { runQuery, getQuery, allQuery } = require('../config/database');
+const { runQuery, getQuery, allQuery } = require('../config/database-postgres');
 
 class User {
   constructor(data) {
@@ -17,14 +17,14 @@ class User {
       const hashedPassword = await bcrypt.hash(password, 12);
       
       const result = await runQuery(
-        `INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)`,
+        `INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id`,
         [name, email, hashedPassword]
       );
 
       // Fetch the created user
       const userData = await getQuery(
-        `SELECT * FROM users WHERE id = ?`,
-        [result.id]
+        `SELECT * FROM users WHERE id = $1`,
+        [result.rows[0].id]
       );
 
       return new User(userData);
@@ -41,7 +41,7 @@ class User {
   static async findUserByEmail(email) {
     try {
       const userData = await getQuery(
-        `SELECT * FROM users WHERE email = ? AND is_active = 1`,
+        `SELECT * FROM users WHERE email = $1 AND is_active = true`,
         [email]
       );
 
@@ -59,7 +59,7 @@ class User {
   static async findUserById(id) {
     try {
       const userData = await getQuery(
-        `SELECT * FROM users WHERE id = ? AND is_active = 1`,
+        `SELECT * FROM users WHERE id = $1 AND is_active = 1`,
         [id]
       );
 
@@ -100,10 +100,12 @@ class User {
       const updates = [];
       const values = [];
 
+      let paramIndex = 1;
       for (const field of allowedFields) {
         if (updateData[field] !== undefined) {
-          updates.push(`${field} = ?`);
+          updates.push(`${field} = $${paramIndex}`);
           values.push(updateData[field]);
+          paramIndex++;
         }
       }
 
@@ -115,13 +117,13 @@ class User {
       values.push(id);
 
       await runQuery(
-        `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+        `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
         values
       );
 
       // Fetch the updated user
       const userData = await getQuery(
-        `SELECT * FROM users WHERE id = ?`,
+        `SELECT * FROM users WHERE id = $1`,
         [id]
       );
 
@@ -135,13 +137,13 @@ class User {
   static async deactivateUser(id) {
     try {
       await runQuery(
-        `UPDATE users SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        `UPDATE users SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
         [id]
       );
 
       // Fetch the updated user
       const userData = await getQuery(
-        `SELECT * FROM users WHERE id = ?`,
+        `SELECT * FROM users WHERE id = $1`,
         [id]
       );
 
