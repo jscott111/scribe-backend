@@ -492,24 +492,25 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' })
 })
 
-const cleanupExpiredSessions = async () => {
-  try {
-    const cleanedCount = await Session.cleanupExpired()
-    if (cleanedCount > 0) {
-      console.log(`🧹 Cleaned up ${cleanedCount} expired sessions`)
-    }
-  } catch (error) {
-    console.error('Error cleaning up sessions:', error)
-  }
-}
+// Sessions are now persistent and don't expire
+// const cleanupExpiredSessions = async () => {
+//   try {
+//     const cleanedCount = await Session.cleanupExpired()
+//     if (cleanedCount > 0) {
+//       console.log(`🧹 Cleaned up ${cleanedCount} expired sessions`)
+//     }
+//   } catch (error) {
+//     console.error('Error cleaning up sessions:', error)
+//   }
+// }
 
-setInterval(cleanupExpiredSessions, 60 * 60 * 1000)
+// setInterval(cleanupExpiredSessions, 60 * 60 * 1000)
 
 const startServer = async () => {
   try {
     await initDatabase()
     
-    await cleanupExpiredSessions()
+    // await cleanupExpiredSessions() // Sessions are now persistent
     
     server.listen(config.PORT, config.HOST, () => {
       console.log(`🚀 Server running on ${config.HOST}:${config.PORT}`)
