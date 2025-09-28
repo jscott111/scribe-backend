@@ -1,19 +1,61 @@
 const fs = require('fs');
 const speech = require('@google-cloud/speech');
+const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
 const config = require('../config');
 const { spawn } = require('child_process');
 
 class SpeechToTextService {
   constructor() {
-    // Initialize Google Cloud Speech client with service account
-    
-    // Set the credentials file path
-    process.env.GOOGLE_APPLICATION_CREDENTIALS = './google-credentials.json';
+    this.projectId = config.GOOGLE_CLOUD_PROJECT_ID;
+    this.secretClient = new SecretManagerServiceClient();
+    this.client = null;
+    this.credentials = null;
+    this.initializeClient();
+  }
+
+  async initializeCredentials() {
+    if (this.credentials) {
+      return this.credentials;
+    }
+
+    try {
+      // Try to load from local file first (for development)
+      if (fs.existsSync('./google-credentials.json')) {
+        console.log('🔧 Loading credentials from local file (development mode)');
+        this.credentials = JSON.parse(fs.readFileSync('./google-credentials.json', 'utf8'));
+        return this.credentials;
+      }
+
+      // Fall back to Secret Manager (for production)
+      console.log('☁️ Loading credentials from Secret Manager (production mode)');
+      const [version] = await this.secretClient.accessSecretVersion({
+        name: `projects/${this.projectId}/secrets/google-credentials/versions/latest`,
+      });
+
+      this.credentials = JSON.parse(version.payload.data.toString());
+      return this.credentials;
+    } catch (error) {
+      console.error('❌ Failed to load credentials:', error);
+      throw new Error('Failed to initialize Google Cloud credentials');
+    }
+  }
+
+  async getSpeechClient() {
+    if (this.client) {
+      return this.client;
+    }
+
+    const credentials = await this.initializeCredentials();
     
     this.client = new speech.SpeechClient({
-      projectId: config.GOOGLE_CLOUD_PROJECT_ID
+      projectId: this.projectId,
+      credentials: {
+        client_email: credentials.client_email,
+        private_key: credentials.private_key
+      }
     });
-    this.initializeClient();
+
+    return this.client;
   }
 
   /**
@@ -71,6 +113,8 @@ class SpeechToTextService {
   async testLinear16Format(audioBuffer) {
     console.log('🧪 Testing LINEAR16 format with Google Cloud Speech-to-Text...');
     
+    const client = await this.getSpeechClient();
+    
     const request = {
       config: {
         encoding: 'LINEAR16',
@@ -83,7 +127,7 @@ class SpeechToTextService {
     };
 
     try {
-      const [response] = await this.client.recognize(request);
+      const [response] = await client.recognize(request);
       console.log('✅ LINEAR16 format test successful:', response);
       return response;
     } catch (error) {
@@ -95,7 +139,8 @@ class SpeechToTextService {
   /**
    * Start streaming recognition with Google Cloud Speech-to-Text
    */
-  startStreamingRecognition(languageCode, callbacks) {
+  async startStreamingRecognition(languageCode, callbacks) {
+    const client = await this.getSpeechClient();
     
     const request = {
       config: {
@@ -110,7 +155,19 @@ class SpeechToTextService {
     };
 
     // Create streaming recognition request
-    const recognizeStream = this.client.streamingRecognize(request);
+    const recognizeStream = client.streamingRecognize(request);
+
+    // Track stream start time for 5-minute limit
+    const streamStartTime = Date.now();
+    const STREAM_DURATION_LIMIT = 4.5 * 60 * 1000; // 4.5 minutes in milliseconds
+
+    // Set up automatic restart timer
+    const restartTimer = setTimeout(() => {
+      console.log('🔄 Google Cloud stream approaching 5-minute limit, restarting...');
+      if (callbacks && callbacks.onRestart) {
+        callbacks.onRestart();
+      }
+    }, STREAM_DURATION_LIMIT);
 
     // Handle streaming responses
     recognizeStream.on('data', (response) => {
@@ -133,16 +190,21 @@ class SpeechToTextService {
 
     recognizeStream.on('error', (error) => {
       console.error('❌ Google Cloud streaming error:', error);
+      clearTimeout(restartTimer);
       if (callbacks && callbacks.onError) {
         callbacks.onError(error);
       }
     });
 
     recognizeStream.on('end', () => {
+      clearTimeout(restartTimer);
       if (callbacks && callbacks.onEnd) {
         callbacks.onEnd();
       }
     });
+
+    // Store restart timer for cleanup
+    recognizeStream._restartTimer = restartTimer;
 
     return recognizeStream;
   }
@@ -163,6 +225,10 @@ class SpeechToTextService {
    */
   endStreamingRecognition(recognizeStream) {
     if (recognizeStream && !recognizeStream.destroyed) {
+      // Clear restart timer if it exists
+      if (recognizeStream._restartTimer) {
+        clearTimeout(recognizeStream._restartTimer);
+      }
       recognizeStream.end();
     }
   }

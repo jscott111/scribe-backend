@@ -335,11 +335,11 @@ io.on('connection', (socket) => {
           const sampleRate = data.sampleRate || 48000;
           
           if (audioFormat === 'LINEAR16') {
-            // Start streaming recognition on first chunk
-            if (audioChunkCounter === 1) {
+            // Start streaming recognition on first chunk for this socket
+            if (!streamingSessions.has(socket.id)) {
               console.log('🎤 Starting Google Cloud streaming recognition...');
               
-              const recognizeStream = speechToTextService.startStreamingRecognition(sourceLanguage, {
+              const recognizeStream = await speechToTextService.startStreamingRecognition(sourceLanguage, {
                 onResult: (result) => {
                   // Send transcription result to frontend
                   socket.emit('transcriptionUpdate', {
@@ -354,6 +354,34 @@ io.on('connection', (socket) => {
                 },
                 onEnd: () => {
                   console.log('🎤 Google Cloud streaming ended');
+                },
+                onRestart: async () => {
+                  console.log('🔄 Restarting Google Cloud stream...');
+                  // End current stream
+                  speechToTextService.endStreamingRecognition(recognizeStream);
+                  streamingSessions.delete(socket.id);
+                  
+                  // Create new stream
+                  const newRecognizeStream = await speechToTextService.startStreamingRecognition(sourceLanguage, {
+                    onResult: (result) => {
+                      socket.emit('transcriptionUpdate', {
+                        transcript: result.transcript,
+                        isFinal: result.isFinal,
+                        confidence: result.confidence,
+                        bubbleId: bubbleId
+                      });
+                    },
+                    onError: (error) => {
+                      console.error('❌ Google Cloud streaming error:', error);
+                    },
+                    onEnd: () => {
+                      console.log('🎤 Google Cloud streaming ended');
+                    },
+                    onRestart: arguments.callee // Recursive restart
+                  });
+                  
+                  // Store new stream
+                  streamingSessions.set(socket.id, newRecognizeStream);
                 }
               });
               

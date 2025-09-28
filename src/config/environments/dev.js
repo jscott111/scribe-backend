@@ -23,8 +23,7 @@ module.exports = {
   AZURE_TRANSLATOR_ENDPOINT: process.env.AZURE_TRANSLATOR_ENDPOINT || 'https://api.cognitive.microsofttranslator.com',
   
   // Google Cloud Speech-to-Text
-  GOOGLE_CLOUD_PROJECT_ID: process.env.GOOGLE_CLOUD_PROJECT_ID || 'your-google-cloud-project-id',
-  GOOGLE_CLOUD_API_KEY: process.env.GOOGLE_CLOUD_API_KEY || 'your-google-cloud-api-key',
+  GOOGLE_CLOUD_PROJECT_ID: process.env.GOOGLE_CLOUD_PROJECT_ID || 'scribe-471123',
   
   // CORS
   CORS_ORIGIN: 'http://speaker.localhost:5173,http://listener.localhost:5173,http://api.localhost:3001',
