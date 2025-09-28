@@ -724,9 +724,11 @@ const startServer = async () => {
     console.log(`🌐 Port: ${config.PORT}`)
     console.log(`🏠 Host: ${config.HOST}`)
     
+    console.log('🔧 Starting database initialization...')
     await initDatabase()
     console.log('✅ Database initialized')
     
+    console.log('🔧 Starting session cleanup...')
     await cleanupExpiredSessions()
     console.log('✅ Expired sessions cleaned up')
     
@@ -736,6 +738,7 @@ const startServer = async () => {
       console.log('✅ Google Cloud Speech client initialized')
     } catch (error) {
       console.warn('⚠️ Google Cloud Speech client initialization failed:', error.message)
+      console.log('⚠️ Continuing without Google Cloud Speech (transcription will not work)')
     }
     
     server.listen(config.PORT, config.HOST, () => {

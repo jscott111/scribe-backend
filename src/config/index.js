@@ -36,7 +36,7 @@ const finalConfig = {
 };
 
 if (environment === 'prod') {
-  const requiredVars = ['JWT_SECRET', 'AZURE_TRANSLATOR_KEY', 'AZURE_TRANSLATOR_REGION', 'CORS_ORIGIN', 'GOOGLE_CLOUD_PROJECT_ID', 'GOOGLE_CLOUD_API_KEY'];
+  const requiredVars = ['JWT_SECRET', 'AZURE_TRANSLATOR_KEY', 'AZURE_TRANSLATOR_REGION', 'CORS_ORIGIN', 'GOOGLE_CLOUD_PROJECT_ID'];
   const missingVars = requiredVars.filter(varName => !finalConfig[varName]);
   
   if (missingVars.length > 0) {

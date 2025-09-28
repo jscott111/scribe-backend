@@ -24,6 +24,13 @@ const initDatabase = () => {
         return reject(new Error('DB_PASSWORD environment variable is required'));
       }
 
+      console.log('🔧 Attempting database connection...');
+      console.log(`📊 DB_HOST: ${config.DB_HOST}`);
+      console.log(`📊 DB_PORT: ${config.DB_PORT}`);
+      console.log(`📊 DB_NAME: ${config.DB_NAME}`);
+      console.log(`📊 DB_USER: ${config.DB_USER}`);
+      console.log(`📊 DB_SSL: ${config.DB_SSL}`);
+
       pool = new Pool({
         host: config.DB_HOST,
         port: config.DB_PORT,
@@ -33,12 +40,17 @@ const initDatabase = () => {
         ssl: config.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
         max: 20,
         idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 10000,
+        connectionTimeoutMillis: 30000, // Increased from 10s to 30s
       });
 
       pool.query('SELECT 1', (err, result) => {
         if (err) {
-          console.error('❌ Database connection failed:', err.message);
+          console.error('❌ Database connection failed:');
+          console.error('Error code:', err.code);
+          console.error('Error message:', err.message);
+          console.error('Error detail:', err.detail);
+          console.error('Error hint:', err.hint);
+          console.error('Full error:', err);
           return reject(err);
         }
         
@@ -49,7 +61,10 @@ const initDatabase = () => {
             console.log('✅ Database migrations completed');
             resolve();
           })
-          .catch(reject);
+          .catch((migrationErr) => {
+            console.error('❌ Migration failed:', migrationErr);
+            reject(migrationErr);
+          });
       });
     } catch (error) {
       console.error('❌ Database initialization error:', error);
