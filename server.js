@@ -44,6 +44,7 @@ app.use('/auth', authRoutes)
 const activeConnections = new Map()
 let audioChunkCounter = 0
 const streamingSessions = new Map() // Track streaming sessions per socket
+const processedTranscripts = new Map() // Track processed transcripts to prevent duplicates
 
 const emitConnectionCount = (sessionId = null) => {
   const connectionsByLanguage = {}
@@ -340,7 +341,7 @@ io.on('connection', (socket) => {
               console.log('🎤 Starting Google Cloud streaming recognition...');
               
               const recognizeStream = await speechToTextService.startStreamingRecognition(sourceLanguage, {
-                onResult: (result) => {
+                onResult: async (result) => {
                   // Send transcription result to frontend
                   socket.emit('transcriptionUpdate', {
                     transcript: result.transcript,
@@ -348,6 +349,107 @@ io.on('connection', (socket) => {
                     confidence: result.confidence,
                     bubbleId: bubbleId
                   });
+
+                  // Handle translation for final results
+                  if (result.isFinal && result.transcript.trim()) {
+                    // Notify frontend that we've received a final result to prevent duplicate finalization
+                    socket.emit('finalResultReceived', { bubbleId });
+                    // Create a unique key based on transcript content to prevent duplicates
+                    const transcriptKey = `${socket.id}-${result.transcript.trim()}`;
+                    const currentTime = Date.now();
+                    
+                    // Check if we've already processed this exact transcript recently (within 3 seconds)
+                    const lastProcessed = processedTranscripts.get(transcriptKey);
+                    if (lastProcessed && (currentTime - lastProcessed) < 3000) {
+                      console.log('🔄 Skipping duplicate transcript:', result.transcript.trim());
+                      return;
+                    }
+                    
+                    // Mark this transcript as processed
+                    processedTranscripts.set(transcriptKey, currentTime);
+                    
+                    // Clean up old processed transcripts (older than 5 minutes)
+                    const fiveMinutesAgo = currentTime - (5 * 60 * 1000);
+                    for (const [key, timestamp] of processedTranscripts.entries()) {
+                      if (timestamp < fiveMinutesAgo) {
+                        processedTranscripts.delete(key);
+                      }
+                    }
+                    
+                    const currentConnection = activeConnections.get(socket.id);
+                    if (currentConnection?.sessionId) {
+                      const sessionConnections = Array.from(activeConnections.entries())
+                        .filter(([_, conn]) => conn.sessionId === currentConnection.sessionId)
+                        .map(([socketId, _]) => socketId);
+                      
+                      const translationConnections = sessionConnections.filter(socketId => {
+                        const conn = activeConnections.get(socketId);
+                        return conn && !conn.userId && conn.targetLanguage;
+                      });
+                      
+                      
+                      // Send transcription to input clients
+                      sessionConnections.forEach(socketId => {
+                        const targetSocket = io.sockets.sockets.get(socketId);
+                        const conn = activeConnections.get(socketId);
+                        if (targetSocket && conn?.userId) {
+                          targetSocket.emit('transcriptionComplete', {
+                            transcription: result.transcript,
+                            sourceLanguage,
+                            bubbleId,
+                            userId: currentConnection.userId,
+                            userEmail: currentConnection.userEmail
+                          });
+                        }
+                      });
+                      
+                      // Process translations
+                      if (translationConnections.length > 0) {
+                        try {
+                          const translations = await Promise.all(
+                            translationConnections.map(async (socketId) => {
+                              const conn = activeConnections.get(socketId);
+                              if (conn?.targetLanguage) {
+                                const translation = await processTranscription(
+                                  result.transcript,
+                                  sourceLanguage,
+                                  conn.targetLanguage
+                                );
+                                return { socketId, translation, targetLanguage: conn.targetLanguage };
+                              }
+                              return null;
+                            })
+                          );
+
+                          translations.forEach(({ socketId, translation, targetLanguage }) => {
+                            if (socketId && translation) {
+                              const targetSocket = io.sockets.sockets.get(socketId);
+                              if (targetSocket) {
+                                targetSocket.emit('translationComplete', {
+                                  originalText: result.transcript,
+                                  translatedText: translation,
+                                  sourceLanguage,
+                                  targetLanguage,
+                                  bubbleId
+                                });
+                              }
+                            }
+                          });
+                        } catch (translationError) {
+                          console.error('Translation error:', translationError);
+                          translationConnections.forEach(socketId => {
+                            const targetSocket = io.sockets.sockets.get(socketId);
+                            if (targetSocket) {
+                              targetSocket.emit('translationError', {
+                                message: 'Translation failed: ' + translationError.message,
+                                bubbleId
+                              });
+                            }
+                          });
+                        }
+                      }
+                    }
+                  }
                 },
                 onError: (error) => {
                   console.error('❌ Google Cloud streaming error:', error);
@@ -357,19 +459,137 @@ io.on('connection', (socket) => {
                 },
                 onRestart: async () => {
                   console.log('🔄 Restarting Google Cloud stream...');
-                  // End current stream
-                  speechToTextService.endStreamingRecognition(recognizeStream);
+                  
+                  // Properly end current stream
+                  if (recognizeStream) {
+                    speechToTextService.endStreamingRecognition(recognizeStream);
+                    // Remove all listeners to prevent further events
+                    recognizeStream.removeAllListeners();
+                  }
+                  
+                  // Clear the session mapping
                   streamingSessions.delete(socket.id);
+                  
+                  // Clear any processed transcripts for this socket to prevent conflicts
+                  const socketPrefix = `${socket.id}-`;
+                  for (const [key, _] of processedTranscripts.entries()) {
+                    if (key.startsWith(socketPrefix)) {
+                      processedTranscripts.delete(key);
+                    }
+                  }
+                  
+                  // Small delay to ensure old stream is fully closed
+                  await new Promise(resolve => setTimeout(resolve, 100));
                   
                   // Create new stream
                   const newRecognizeStream = await speechToTextService.startStreamingRecognition(sourceLanguage, {
-                    onResult: (result) => {
+                    onResult: async (result) => {
                       socket.emit('transcriptionUpdate', {
                         transcript: result.transcript,
                         isFinal: result.isFinal,
                         confidence: result.confidence,
                         bubbleId: bubbleId
                       });
+
+                      // Handle translation for final results
+                      if (result.isFinal && result.transcript.trim()) {
+                        // Notify frontend that we've received a final result to prevent duplicate finalization
+                        socket.emit('finalResultReceived', { bubbleId });
+                        // Create a unique key based on transcript content to prevent duplicates
+                        const transcriptKey = `${socket.id}-${result.transcript.trim()}`;
+                        const currentTime = Date.now();
+                        
+                        // Check if we've already processed this exact transcript recently (within 3 seconds)
+                        const lastProcessed = processedTranscripts.get(transcriptKey);
+                        if (lastProcessed && (currentTime - lastProcessed) < 3000) {
+                          console.log('🔄 Skipping duplicate transcript:', result.transcript.trim());
+                          return;
+                        }
+                        
+                        // Mark this transcript as processed
+                        processedTranscripts.set(transcriptKey, currentTime);
+                        
+                        // Clean up old processed transcripts (older than 5 minutes)
+                        const fiveMinutesAgo = currentTime - (5 * 60 * 1000);
+                        for (const [key, timestamp] of processedTranscripts.entries()) {
+                          if (timestamp < fiveMinutesAgo) {
+                            processedTranscripts.delete(key);
+                          }
+                        }
+                        
+                        const currentConnection = activeConnections.get(socket.id);
+                        if (currentConnection?.sessionId) {
+                          const sessionConnections = Array.from(activeConnections.entries())
+                            .filter(([_, conn]) => conn.sessionId === currentConnection.sessionId)
+                            .map(([socketId, _]) => socketId);
+                          
+                          const translationConnections = sessionConnections.filter(socketId => {
+                            const conn = activeConnections.get(socketId);
+                            return conn && !conn.userId && conn.targetLanguage;
+                          });
+                          
+                          // Send transcription to input clients
+                          sessionConnections.forEach(socketId => {
+                            const targetSocket = io.sockets.sockets.get(socketId);
+                            const conn = activeConnections.get(socketId);
+                            if (targetSocket && conn?.userId) {
+                              targetSocket.emit('transcriptionComplete', {
+                                transcription: result.transcript,
+                                sourceLanguage,
+                                bubbleId,
+                                userId: currentConnection.userId,
+                                userEmail: currentConnection.userEmail
+                              });
+                            }
+                          });
+                          
+                          // Process translations
+                          if (translationConnections.length > 0) {
+                            try {
+                              const translations = await Promise.all(
+                                translationConnections.map(async (socketId) => {
+                                  const conn = activeConnections.get(socketId);
+                                  if (conn?.targetLanguage) {
+                                    const translation = await processTranscription(
+                                      result.transcript,
+                                      sourceLanguage,
+                                      conn.targetLanguage
+                                    );
+                                    return { socketId, translation, targetLanguage: conn.targetLanguage };
+                                  }
+                                  return null;
+                                })
+                              );
+
+                              translations.forEach(({ socketId, translation, targetLanguage }) => {
+                                if (socketId && translation) {
+                                  const targetSocket = io.sockets.sockets.get(socketId);
+                                  if (targetSocket) {
+                                    targetSocket.emit('translationComplete', {
+                                      originalText: result.transcript,
+                                      translatedText: translation,
+                                      sourceLanguage,
+                                      targetLanguage,
+                                      bubbleId
+                                    });
+                                  }
+                                }
+                              });
+                            } catch (translationError) {
+                              console.error('Translation error:', translationError);
+                              translationConnections.forEach(socketId => {
+                                const targetSocket = io.sockets.sockets.get(socketId);
+                                if (targetSocket) {
+                                  targetSocket.emit('translationError', {
+                                    message: 'Translation failed: ' + translationError.message,
+                                    bubbleId
+                                  });
+                                }
+                              });
+                            }
+                          }
+                        }
+                      }
                     },
                     onError: (error) => {
                       console.error('❌ Google Cloud streaming error:', error);
@@ -396,6 +616,8 @@ io.on('connection', (socket) => {
             } else {
               console.error('❌ No stream found for socket:', socket.id);
             }
+          } else {
+            console.log('🎤 Stream already exists for socket:', socket.id, '- using existing stream');
           }
         } catch (speechError) {
           console.error('❌ Google Cloud Speech-to-Text error:', speechError)
@@ -452,8 +674,9 @@ io.on('connection', (socket) => {
                 if (socketId && translation) {
                   const targetSocket = io.sockets.sockets.get(socketId)
                   if (targetSocket) {
-                    targetSocket.emit('translation', {
-                      translation,
+                    targetSocket.emit('translationComplete', {
+                      originalText: finalTranscript,
+                      translatedText: translation,
                       sourceLanguage,
                       targetLanguage,
                       bubbleId
@@ -553,6 +776,14 @@ io.on('connection', (socket) => {
     if (recognizeStream) {
       speechToTextService.endStreamingRecognition(recognizeStream)
       streamingSessions.delete(socket.id)
+    }
+    
+    // Clean up processed transcripts for this socket
+    const socketPrefix = `${socket.id}-`;
+    for (const [key, _] of processedTranscripts.entries()) {
+      if (key.startsWith(socketPrefix)) {
+        processedTranscripts.delete(key);
+      }
     }
     
     console.log(`🔌 Client disconnected: ${socket.user?.email || 'Listener'} (${socket.sessionId || 'No Session'})`)

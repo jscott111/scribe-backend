@@ -236,8 +236,17 @@ class SpeechToTextService {
       // Clear restart timer if it exists
       if (recognizeStream._restartTimer) {
         clearTimeout(recognizeStream._restartTimer);
+        recognizeStream._restartTimer = null;
       }
+      
+      // Remove all event listeners to prevent further events
+      recognizeStream.removeAllListeners();
+      
+      // End the stream
       recognizeStream.end();
+      
+      // Mark as destroyed to prevent further use
+      recognizeStream.destroyed = true;
     }
   }
 
