@@ -1,3 +1,6 @@
+// Load environment variables first
+require('dotenv').config();
+
 const environment = process.env.NODE_ENV || 'dev';
 let config;
 try {
@@ -26,12 +29,14 @@ const finalConfig = {
   AZURE_TRANSLATOR_KEY: process.env.AZURE_TRANSLATOR_KEY || config.AZURE_TRANSLATOR_KEY,
   AZURE_TRANSLATOR_REGION: process.env.AZURE_TRANSLATOR_REGION || config.AZURE_TRANSLATOR_REGION,
   AZURE_TRANSLATOR_ENDPOINT: process.env.AZURE_TRANSLATOR_ENDPOINT || config.AZURE_TRANSLATOR_ENDPOINT,
+  GOOGLE_CLOUD_PROJECT_ID: process.env.GOOGLE_CLOUD_PROJECT_ID || config.GOOGLE_CLOUD_PROJECT_ID,
+  GOOGLE_CLOUD_API_KEY: process.env.GOOGLE_CLOUD_API_KEY || config.GOOGLE_CLOUD_API_KEY,
   CORS_ORIGIN: process.env.CORS_ORIGIN || config.CORS_ORIGIN,
   LOG_LEVEL: process.env.LOG_LEVEL || config.LOG_LEVEL
 };
 
 if (environment === 'prod') {
-  const requiredVars = ['JWT_SECRET', 'AZURE_TRANSLATOR_KEY', 'AZURE_TRANSLATOR_REGION', 'CORS_ORIGIN'];
+  const requiredVars = ['JWT_SECRET', 'AZURE_TRANSLATOR_KEY', 'AZURE_TRANSLATOR_REGION', 'CORS_ORIGIN', 'GOOGLE_CLOUD_PROJECT_ID', 'GOOGLE_CLOUD_API_KEY'];
   const missingVars = requiredVars.filter(varName => !finalConfig[varName]);
   
   if (missingVars.length > 0) {
