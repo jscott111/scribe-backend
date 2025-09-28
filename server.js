@@ -607,18 +607,13 @@ async function processTranscription(transcription, sourceLanguage, targetLanguag
 
 app.get('/health', (req, res) => {
   try {
-    const speechToTextStatus = speechToTextService.getStatus()
-    
+    // Simple health check that doesn't depend on external services
     res.status(200).json({ 
       status: 'OK', 
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
-      memory: process.memoryUsage(),
-      activeConnections: activeConnections.size,
-      totalClients: io.engine.clientsCount,
-      services: {
-        speechToText: speechToTextStatus
-      }
+      port: config.PORT,
+      environment: config.NODE_ENV
     })
   } catch (error) {
     console.error('Health check error:', error);
@@ -724,15 +719,31 @@ setInterval(cleanupExpiredSessions, 60 * 60 * 1000)
 
 const startServer = async () => {
   try {
+    console.log('🔧 Starting server initialization...')
+    console.log(`📊 Environment: ${config.NODE_ENV}`)
+    console.log(`🌐 Port: ${config.PORT}`)
+    console.log(`🏠 Host: ${config.HOST}`)
+    
     await initDatabase()
+    console.log('✅ Database initialized')
     
     await cleanupExpiredSessions()
+    console.log('✅ Expired sessions cleaned up')
+    
+    // Initialize Google Cloud client early to avoid startup delays
+    try {
+      await speechToTextService.getSpeechClient()
+      console.log('✅ Google Cloud Speech client initialized')
+    } catch (error) {
+      console.warn('⚠️ Google Cloud Speech client initialization failed:', error.message)
+    }
     
     server.listen(config.PORT, config.HOST, () => {
       console.log(`🚀 Server running on ${config.HOST}:${config.PORT}`)
+      console.log('✅ Server is ready to accept connections')
     })
   } catch (error) {
-    console.error('Failed to start server:', error)
+    console.error('❌ Failed to start server:', error)
     process.exit(1)
   }
 }

@@ -26,17 +26,17 @@ class SpeechToTextService {
         return this.credentials;
       }
 
-      // Fall back to Secret Manager (for production)
-      console.log('☁️ Loading credentials from Secret Manager (production mode)');
-      const [version] = await this.secretClient.accessSecretVersion({
-        name: `projects/${this.projectId}/secrets/google-credentials/versions/latest`,
-      });
-
-      this.credentials = JSON.parse(version.payload.data.toString());
+      // For Cloud Run, use the default service account
+      console.log('☁️ Using default service account (Cloud Run mode)');
+      // Return null to use default credentials
+      this.credentials = null;
       return this.credentials;
     } catch (error) {
       console.error('❌ Failed to load credentials:', error);
-      throw new Error('Failed to initialize Google Cloud credentials');
+      // Don't throw error, let it use default credentials
+      console.log('⚠️ Falling back to default service account');
+      this.credentials = null;
+      return this.credentials;
     }
   }
 
@@ -47,13 +47,21 @@ class SpeechToTextService {
 
     const credentials = await this.initializeCredentials();
     
-    this.client = new speech.SpeechClient({
-      projectId: this.projectId,
-      credentials: {
-        client_email: credentials.client_email,
-        private_key: credentials.private_key
-      }
-    });
+    // Use default credentials if no explicit credentials found
+    if (credentials) {
+      this.client = new speech.SpeechClient({
+        projectId: this.projectId,
+        credentials: {
+          client_email: credentials.client_email,
+          private_key: credentials.private_key
+        }
+      });
+    } else {
+      // Use default service account (Cloud Run)
+      this.client = new speech.SpeechClient({
+        projectId: this.projectId
+      });
+    }
 
     return this.client;
   }

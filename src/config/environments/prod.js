@@ -25,6 +25,9 @@ module.exports = {
   // CORS - Allow your frontend domains
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'https://speaker.scribe-ai.ca,https://listener.scribe-ai.ca,https://api.scribe-ai.ca',
   
+  // Google Cloud
+  GOOGLE_CLOUD_PROJECT_ID: process.env.GOOGLE_CLOUD_PROJECT_ID || 'scribe-471123',
+  
   // Logging
   LOG_LEVEL: 'warn'
 }
