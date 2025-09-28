@@ -9,6 +9,8 @@ const { authenticateToken, authenticateSocket } = require('./src/middleware/auth
 const authRoutes = require('./src/routes/auth')
 const { initDatabase, runQuery } = require('./src/database/database')
 const Session = require('./src/models/Session')
+const User = require('./src/models/User')
+const speechToTextService = require('./src/services/speechToTextService')
 const app = express()
 const server = http.createServer(app)
 
@@ -40,6 +42,8 @@ app.use(express.static(path.join(__dirname, 'public')))
 app.use('/auth', authRoutes)
 
 const activeConnections = new Map()
+let audioChunkCounter = 0
+const streamingSessions = new Map() // Track streaming sessions per socket
 
 const emitConnectionCount = (sessionId = null) => {
   const connectionsByLanguage = {}
@@ -86,6 +90,23 @@ const emitConnectionCount = (sessionId = null) => {
       const targetSocket = io.sockets.sockets.get(socketId)
       if (targetSocket) {
         targetSocket.emit('connectionCount', connectionData)
+      }
+    })
+  }
+}
+
+async function processTranslations(translationConnections, transcript, sourceLanguage, bubbleId) {
+  try {
+    console.log('Processing translations:', translationConnections, transcript, sourceLanguage, bubbleId)
+  } catch (translationError) {
+    console.error('Translation error:', translationError)
+    translationConnections.forEach(socketId => {
+      const targetSocket = io.sockets.sockets.get(socketId)
+      if (targetSocket) {
+        targetSocket.emit('translationError', {
+          message: 'Translation failed: ' + translationError.message,
+          bubbleId
+        })
       }
     })
   }
@@ -268,38 +289,192 @@ io.on('connection', (socket) => {
     }
   })
 
-  socket.on('audioStream', async (data) => {
+  // Google Cloud Speech-to-Text streaming handler
+  socket.on('googleSpeechTranscription', async (data) => {
+    
     try {
-      const { audioData, sourceLanguage, targetLanguage } = data
-      
+      if (socket.needsTokenRefresh) {
+        console.log('❌ Token needs refresh');
+        socket.emit('tokenExpired', {
+          message: 'Your session has expired. Please refresh your token.',
+          code: 'TOKEN_EXPIRED'
+        })
+        return
+      }
+
+      const { 
+        audioData, 
+        sourceLanguage, 
+        bubbleId, 
+        isFinal, 
+        interimTranscript,
+        finalTranscript,
+        wordCount,
+        maxWordsPerBubble = 15,
+        speechEndTimeout = 2.0
+      } = data
+
       const connection = activeConnections.get(socket.id)
       if (connection) {
         connection.isStreaming = true
         connection.sourceLanguage = sourceLanguage
-        connection.targetLanguage = targetLanguage
       }
 
-      const translatedText = await processAudioStream(audioData, sourceLanguage, targetLanguage)
-      
-      if (translatedText) {
-        socket.emit('translation', {
-          translatedText,
-          sourceLanguage,
-          targetLanguage,
-          timestamp: new Date().toISOString()
-        })
+      const currentConnection = activeConnections.get(socket.id)
+      emitConnectionCount(currentConnection?.sessionId)
+
+      // If we have audio data, process it with Google Cloud Speech-to-Text
+      if (audioData && audioData.length > 0) {
+        try {
+          const audioBuffer = Buffer.from(audioData, 'base64')
+
+          audioChunkCounter++
+          
+          // Check if this is LINEAR16 format from frontend
+          const audioFormat = data.audioFormat || 'WEBM';
+          const sampleRate = data.sampleRate || 48000;
+          
+          if (audioFormat === 'LINEAR16') {
+            // Start streaming recognition on first chunk
+            if (audioChunkCounter === 1) {
+              console.log('🎤 Starting Google Cloud streaming recognition...');
+              
+              const recognizeStream = speechToTextService.startStreamingRecognition(sourceLanguage, {
+                onResult: (result) => {
+                  // Send transcription result to frontend
+                  socket.emit('transcriptionUpdate', {
+                    transcript: result.transcript,
+                    isFinal: result.isFinal,
+                    confidence: result.confidence,
+                    bubbleId: bubbleId
+                  });
+                },
+                onError: (error) => {
+                  console.error('❌ Google Cloud streaming error:', error);
+                },
+                onEnd: () => {
+                  console.log('🎤 Google Cloud streaming ended');
+                }
+              });
+              
+              // Store the stream for this socket
+              streamingSessions.set(socket.id, recognizeStream);
+            }
+            
+            // Send audio chunk to Google Cloud streaming
+            const recognizeStream = streamingSessions.get(socket.id);
+            if (recognizeStream) {
+              speechToTextService.sendAudioToStream(recognizeStream, audioBuffer);
+            } else {
+              console.error('❌ No stream found for socket:', socket.id);
+            }
+          }
+        } catch (speechError) {
+          console.error('❌ Google Cloud Speech-to-Text error:', speechError)
+          socket.emit('error', { 
+            message: 'Speech recognition failed: ' + speechError.message 
+          })
+        }
       }
-      
+
+      // Handle manual finalization (when frontend sends final transcript)
+      if (finalTranscript && isFinal && !audioData) {
+        if (currentConnection?.sessionId) {
+          const sessionConnections = Array.from(activeConnections.entries())
+            .filter(([_, conn]) => conn.sessionId === currentConnection.sessionId)
+            .map(([socketId, _]) => socketId)
+          
+          const translationConnections = sessionConnections.filter(socketId => {
+            const conn = activeConnections.get(socketId)
+            return conn && !conn.userId && conn.targetLanguage
+          })
+          
+          sessionConnections.forEach(socketId => {
+            const targetSocket = io.sockets.sockets.get(socketId)
+            const conn = activeConnections.get(socketId)
+            if (targetSocket && conn?.userId) {
+              targetSocket.emit('transcriptionComplete', {
+                transcription: finalTranscript,
+                sourceLanguage,
+                bubbleId,
+                userId: currentConnection.userId,
+                userEmail: currentConnection.userEmail
+              })
+            }
+          })
+          
+          if (translationConnections.length > 0) {
+            try {
+              const translations = await Promise.all(
+                translationConnections.map(async (socketId) => {
+                  const conn = activeConnections.get(socketId)
+                  if (conn?.targetLanguage) {
+                    const translation = await processTranscription(
+                      finalTranscript, 
+                      sourceLanguage, 
+                      conn.targetLanguage
+                    )
+                    return { socketId, translation, targetLanguage: conn.targetLanguage }
+                  }
+                  return null
+                })
+              )
+
+              translations.forEach(({ socketId, translation, targetLanguage }) => {
+                if (socketId && translation) {
+                  const targetSocket = io.sockets.sockets.get(socketId)
+                  if (targetSocket) {
+                    targetSocket.emit('translation', {
+                      translation,
+                      sourceLanguage,
+                      targetLanguage,
+                      bubbleId
+                    })
+                  }
+                }
+              })
+            } catch (translationError) {
+              console.error('Translation error:', translationError)
+              translationConnections.forEach(socketId => {
+                const targetSocket = io.sockets.sockets.get(socketId)
+                if (targetSocket) {
+                  targetSocket.emit('translationError', {
+                    message: 'Translation failed: ' + translationError.message,
+                    bubbleId
+                  })
+                }
+              })
+            }
+          }
+        } else {
+          io.emit('transcriptionComplete', {
+            transcription: finalTranscript,
+            sourceLanguage,
+            bubbleId,
+            userId: currentConnection?.userId,
+            userEmail: currentConnection?.userEmail
+          })
+        }
+      }
+
     } catch (error) {
-      console.error('Error processing audio stream:', error)
-      socket.emit('error', { message: 'Failed to process audio stream' })
+      console.error('Error processing Google Cloud speech transcription:', error)
+      socket.emit('error', { message: 'Failed to process speech transcription: ' + error.message })
     }
   })
+
 
   socket.on('stopStreaming', () => {
     const connection = activeConnections.get(socket.id)
     if (connection) {
       connection.isStreaming = false
+    }
+    
+    // End Google Cloud streaming session
+    const recognizeStream = streamingSessions.get(socket.id)
+    if (recognizeStream) {
+      speechToTextService.endStreamingRecognition(recognizeStream)
+      streamingSessions.delete(socket.id)
     }
   })
 
@@ -344,6 +519,15 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     const connection = activeConnections.get(socket.id)
     activeConnections.delete(socket.id)
+    
+    // Clean up streaming session
+    const recognizeStream = streamingSessions.get(socket.id)
+    if (recognizeStream) {
+      speechToTextService.endStreamingRecognition(recognizeStream)
+      streamingSessions.delete(socket.id)
+    }
+    
+    console.log(`🔌 Client disconnected: ${socket.user?.email || 'Listener'} (${socket.sessionId || 'No Session'})`)
     
     emitConnectionCount(connection?.sessionId)
   })
@@ -395,13 +579,18 @@ async function processTranscription(transcription, sourceLanguage, targetLanguag
 
 app.get('/health', (req, res) => {
   try {
+    const speechToTextStatus = speechToTextService.getStatus()
+    
     res.status(200).json({ 
       status: 'OK', 
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       memory: process.memoryUsage(),
       activeConnections: activeConnections.size,
-      totalClients: io.engine.clientsCount
+      totalClients: io.engine.clientsCount,
+      services: {
+        speechToText: speechToTextStatus
+      }
     })
   } catch (error) {
     console.error('Health check error:', error);

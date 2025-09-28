@@ -20,6 +20,11 @@ module.exports = {
   // Azure Translator
   AZURE_TRANSLATOR_KEY: process.env.AZURE_TRANSLATOR_KEY || 'your-azure-translator-key-here',
   AZURE_TRANSLATOR_REGION: process.env.AZURE_TRANSLATOR_REGION || 'your-azure-region-here',
+  AZURE_TRANSLATOR_ENDPOINT: process.env.AZURE_TRANSLATOR_ENDPOINT || 'https://api.cognitive.microsofttranslator.com',
+  
+  // Google Cloud Speech-to-Text
+  GOOGLE_CLOUD_PROJECT_ID: process.env.GOOGLE_CLOUD_PROJECT_ID || 'your-google-cloud-project-id',
+  GOOGLE_CLOUD_API_KEY: process.env.GOOGLE_CLOUD_API_KEY || 'your-google-cloud-api-key',
   
   // CORS
   CORS_ORIGIN: 'http://speaker.localhost:5173,http://listener.localhost:5173,http://api.localhost:3001',
