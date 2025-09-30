@@ -160,6 +160,16 @@ class SpeechToTextService {
         enableInterimResults: true, // Explicitly enable interim results
       },
       interimResults: true, // Get interim results for real-time display
+      streamingFeatures: {
+        voiceActivityTimeout: {
+          speechStartTimeout: {
+            seconds: 1, // Start detecting speech after 1 second
+          },
+          speechEndTimeout: {
+            seconds: 0.25, // Finalize after 0.5 seconds of silence
+          }
+        }
+      }
     };
 
     // Create streaming recognition request
