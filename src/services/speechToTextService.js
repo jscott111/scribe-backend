@@ -161,12 +161,13 @@ class SpeechToTextService {
       },
       interimResults: true, // Get interim results for real-time display
       streamingFeatures: {
+        enableVoiceActivityEvents: true,
         voiceActivityTimeout: {
           speechStartTimeout: {
-            seconds: 1, // Start detecting speech after 1 second
+            seconds: 0.1, // Wait 0.5 seconds for speech to start
           },
           speechEndTimeout: {
-            seconds: 0.25, // Finalize after 0.5 seconds of silence
+            seconds: 0.1
           }
         }
       }
