@@ -32,6 +32,8 @@ const finalConfig = {
   GOOGLE_CLOUD_PROJECT_ID: process.env.GOOGLE_CLOUD_PROJECT_ID || config.GOOGLE_CLOUD_PROJECT_ID,
   GOOGLE_CLOUD_API_KEY: process.env.GOOGLE_CLOUD_API_KEY || config.GOOGLE_CLOUD_API_KEY,
   CORS_ORIGIN: process.env.CORS_ORIGIN || config.CORS_ORIGIN,
+  FRONTEND_URL: process.env.FRONTEND_URL || config.FRONTEND_URL,
+  TRANSLATION_URL: process.env.TRANSLATION_URL || config.TRANSLATION_URL,
   LOG_LEVEL: process.env.LOG_LEVEL || config.LOG_LEVEL
 };
 

@@ -8,7 +8,6 @@ const config = require('./src/config')
 const { authenticateToken, authenticateSocket } = require('./src/middleware/auth')
 const authRoutes = require('./src/routes/auth')
 const { initDatabase, runQuery } = require('./src/database/database')
-const Session = require('./src/models/Session')
 const User = require('./src/models/User')
 const speechToTextService = require('./src/services/speechToTextService')
 const app = express()
@@ -46,16 +45,16 @@ let audioChunkCounter = 0
 const streamingSessions = new Map() // Track streaming sessions per socket
 const processedTranscripts = new Map() // Track processed transcripts to prevent duplicates
 
-const emitConnectionCount = (sessionId = null) => {
+const emitConnectionCount = (userCode = null) => {
   const connectionsByLanguage = {}
   let totalConnections = 0
   
   activeConnections.forEach((connection) => {
-    if (sessionId && connection.sessionId !== sessionId) {
+    if (userCode && connection.userCode !== userCode) {
       return
     }
     
-    if (!connection.sessionId) {
+    if (!connection.userCode) {
       return
     }
     
@@ -70,13 +69,13 @@ const emitConnectionCount = (sessionId = null) => {
     byLanguage: connectionsByLanguage
   }
   
-  if (sessionId) {
-    const sessionConnections = Array.from(activeConnections.entries())
-      .filter(([_, conn]) => conn.sessionId === sessionId)
+  if (userCode) {
+    const userCodeConnections = Array.from(activeConnections.entries())
+      .filter(([_, conn]) => conn.userCode === userCode)
       .map(([socketId, _]) => socketId)
     
     
-    sessionConnections.forEach(socketId => {
+    userCodeConnections.forEach(socketId => {
       const targetSocket = io.sockets.sockets.get(socketId)
       if (targetSocket) {
         targetSocket.emit('connectionCount', connectionData)
@@ -84,7 +83,7 @@ const emitConnectionCount = (sessionId = null) => {
     })
   } else {
     const validConnections = Array.from(activeConnections.entries())
-      .filter(([_, conn]) => conn.sessionId)
+      .filter(([_, conn]) => conn.userCode)
       .map(([socketId, _]) => socketId)
     
     validConnections.forEach(socketId => {
@@ -114,12 +113,12 @@ async function processTranslations(translationConnections, transcript, sourceLan
 }
 
 io.on('connection', (socket) => {
-  console.log(`🔌 Client connected: ${socket.user?.email || 'Listener'} (${socket.sessionId || 'No Session'})`)
+  console.log(`🔌 Client connected: ${socket.user?.email || 'Listener'} (${socket.userCode || 'No User Code'})`)
   
   activeConnections.set(socket.id, {
     userId: socket.user?.id,
     userEmail: socket.user?.email,
-    sessionId: socket.sessionId,
+    userCode: socket.userCode,
     isStreaming: false,
     sourceLanguage: null,
     targetLanguage: null,
@@ -133,7 +132,7 @@ io.on('connection', (socket) => {
     })
   }
   
-  emitConnectionCount(socket.sessionId)
+  emitConnectionCount(socket.userCode)
 
   socket.on('refreshToken', async (data) => {
     try {
@@ -193,6 +192,7 @@ io.on('connection', (socket) => {
 
   socket.on('speechTranscription', async (data) => {
     try {
+      
       if (socket.needsTokenRefresh) {
         socket.emit('tokenExpired', {
           message: 'Your session has expired. Please refresh your token.',
@@ -210,19 +210,19 @@ io.on('connection', (socket) => {
       }
 
       const currentConnection = activeConnections.get(socket.id)
-      emitConnectionCount(currentConnection?.sessionId)
+      emitConnectionCount(currentConnection?.userCode)
       
-      if (currentConnection?.sessionId) {
-        const sessionConnections = Array.from(activeConnections.entries())
-          .filter(([_, conn]) => conn.sessionId === currentConnection.sessionId)
+      if (currentConnection?.userCode) {
+        const userCodeConnections = Array.from(activeConnections.entries())
+          .filter(([_, conn]) => conn.userCode === currentConnection.userCode)
           .map(([socketId, _]) => socketId)
         
-        const translationConnections = sessionConnections.filter(socketId => {
+        const translationConnections = userCodeConnections.filter(socketId => {
           const conn = activeConnections.get(socketId)
-          return conn && !conn.userId && conn.targetLanguage
+          return conn && !conn.isStreaming && conn.targetLanguage
         })
         
-        sessionConnections.forEach(socketId => {
+        userCodeConnections.forEach(socketId => {
           const targetSocket = io.sockets.sockets.get(socketId)
           const conn = activeConnections.get(socketId)
           if (targetSocket && conn?.userId) {
@@ -241,10 +241,6 @@ io.on('connection', (socket) => {
             for (const socketId of translationConnections) {
               const conn = activeConnections.get(socketId)
               if (conn?.targetLanguage) {
-                const characterCount = transcription.length
-                await Session.updateCharacterCount(characterCount, currentConnection.sessionId)
-                await Session.updateLastActivity(currentConnection.sessionId)
-
                 const translatedText = await processTranscription(transcription, sourceLanguage, conn.targetLanguage)
                 
                 const targetSocket = io.sockets.sockets.get(socketId)
@@ -292,7 +288,6 @@ io.on('connection', (socket) => {
 
   // Google Cloud Speech-to-Text streaming handler
   socket.on('googleSpeechTranscription', async (data) => {
-    
     try {
       if (socket.needsTokenRefresh) {
         console.log('❌ Token needs refresh');
@@ -322,7 +317,7 @@ io.on('connection', (socket) => {
       }
 
       const currentConnection = activeConnections.get(socket.id)
-      emitConnectionCount(currentConnection?.sessionId)
+      emitConnectionCount(currentConnection?.userCode)
 
       // If we have audio data, process it with Google Cloud Speech-to-Text
       if (audioData && audioData.length > 0) {
@@ -377,19 +372,19 @@ io.on('connection', (socket) => {
                     }
                     
                     const currentConnection = activeConnections.get(socket.id);
-                    if (currentConnection?.sessionId) {
-                      const sessionConnections = Array.from(activeConnections.entries())
-                        .filter(([_, conn]) => conn.sessionId === currentConnection.sessionId)
+                    if (currentConnection?.userCode) {
+                      const userCodeConnections = Array.from(activeConnections.entries())
+                        .filter(([_, conn]) => conn.userCode === currentConnection.userCode)
                         .map(([socketId, _]) => socketId);
                       
-                      const translationConnections = sessionConnections.filter(socketId => {
+                      const translationConnections = userCodeConnections.filter(socketId => {
                         const conn = activeConnections.get(socketId);
-                        return conn && !conn.userId && conn.targetLanguage;
+                        return conn && !conn.isStreaming && conn.targetLanguage;
                       });
                       
                       
                       // Send transcription to input clients
-                      sessionConnections.forEach(socketId => {
+                      userCodeConnections.forEach(socketId => {
                         const targetSocket = io.sockets.sockets.get(socketId);
                         const conn = activeConnections.get(socketId);
                         if (targetSocket && conn?.userId) {
@@ -518,18 +513,18 @@ io.on('connection', (socket) => {
                         }
                         
                         const currentConnection = activeConnections.get(socket.id);
-                        if (currentConnection?.sessionId) {
-                          const sessionConnections = Array.from(activeConnections.entries())
-                            .filter(([_, conn]) => conn.sessionId === currentConnection.sessionId)
+                        if (currentConnection?.userCode) {
+                          const userCodeConnections = Array.from(activeConnections.entries())
+                            .filter(([_, conn]) => conn.userCode === currentConnection.userCode)
                             .map(([socketId, _]) => socketId);
                           
-                          const translationConnections = sessionConnections.filter(socketId => {
+                          const translationConnections = userCodeConnections.filter(socketId => {
                             const conn = activeConnections.get(socketId);
                             return conn && !conn.userId && conn.targetLanguage;
                           });
                           
                           // Send transcription to input clients
-                          sessionConnections.forEach(socketId => {
+                          userCodeConnections.forEach(socketId => {
                             const targetSocket = io.sockets.sockets.get(socketId);
                             const conn = activeConnections.get(socketId);
                             if (targetSocket && conn?.userId) {
@@ -629,17 +624,17 @@ io.on('connection', (socket) => {
 
       // Handle manual finalization (when frontend sends final transcript)
       if (finalTranscript && isFinal && !audioData) {
-        if (currentConnection?.sessionId) {
-          const sessionConnections = Array.from(activeConnections.entries())
-            .filter(([_, conn]) => conn.sessionId === currentConnection.sessionId)
+        if (currentConnection?.userCode) {
+          const userCodeConnections = Array.from(activeConnections.entries())
+            .filter(([_, conn]) => conn.userCode === currentConnection.userCode)
             .map(([socketId, _]) => socketId)
           
-          const translationConnections = sessionConnections.filter(socketId => {
+          const translationConnections = userCodeConnections.filter(socketId => {
             const conn = activeConnections.get(socketId)
             return conn && !conn.userId && conn.targetLanguage
           })
           
-          sessionConnections.forEach(socketId => {
+          userCodeConnections.forEach(socketId => {
             const targetSocket = io.sockets.sockets.get(socketId)
             const conn = activeConnections.get(socketId)
             if (targetSocket && conn?.userId) {
@@ -733,23 +728,23 @@ io.on('connection', (socket) => {
     const connection = activeConnections.get(socket.id)
     if (connection) {
       connection.targetLanguage = data.targetLanguage
-      emitConnectionCount(connection.sessionId)
+      emitConnectionCount(connection.userCode)
     }
   })
 
   socket.on('getConnectionCount', () => {
     const currentConnection = activeConnections.get(socket.id)
-    const sessionId = currentConnection?.sessionId
+    const userCode = currentConnection?.userCode
     
     const connectionsByLanguage = {}
     let totalConnections = 0
     
     activeConnections.forEach((connection) => {
-      if (sessionId && connection.sessionId !== sessionId) {
+      if (userCode && connection.userCode !== userCode) {
         return
       }
       
-      if (!connection.sessionId) {
+      if (!connection.userCode) {
         return
       }
       
@@ -786,9 +781,9 @@ io.on('connection', (socket) => {
       }
     }
     
-    console.log(`🔌 Client disconnected: ${socket.user?.email || 'Listener'} (${socket.sessionId || 'No Session'})`)
+    console.log(`🔌 Client disconnected: ${socket.user?.email || 'Listener'} (${socket.userCode || 'No User Code'})`)
     
-    emitConnectionCount(connection?.sessionId)
+    emitConnectionCount(connection?.userCode)
   })
 })
 
@@ -856,76 +851,6 @@ app.get('/health', (req, res) => {
   }
 })
 
-app.post('/sessions', authenticateToken, async (req, res) => {
-  try {
-    const { sessionId } = req.body
-    const userId = req.user.id
-    
-    if (!sessionId || !/^[A-Z0-9]{8}$/.test(sessionId)) {
-      return res.status(400).json({ error: 'Valid session ID required' })
-    }
-    
-    await Session.deactivateAllForUserExcept(userId, sessionId)
-    
-    let session = await Session.findById(sessionId)
-    
-    if (session) {
-      if (!session.userId) {
-        await runQuery(
-          `UPDATE sessions SET user_id = $1, is_active = true WHERE id = $2`,
-          [userId, sessionId]
-        )
-      } else {
-        await runQuery(
-          `UPDATE sessions SET is_active = true WHERE id = $1`,
-          [sessionId]
-        )
-      }
-      res.json({ sessionId, message: 'Session found and associated' })
-    } else {
-      session = await Session.create(sessionId, userId)
-      res.json({ sessionId, message: 'Session created' })
-    }
-  } catch (error) {
-    console.error('Session creation error:', error)
-    res.status(500).json({ error: 'Failed to create session' })
-  }
-})
-
-app.get('/sessions/:sessionId/validate', async (req, res) => {
-  try {
-    const { sessionId } = req.params
-    
-    if (!sessionId || !/^[A-Z0-9]{8}$/.test(sessionId)) {
-      return res.status(400).json({ 
-        valid: false, 
-        error: 'Invalid session ID format' 
-      })
-    }
-    
-    const session = await Session.findById(sessionId)
-    
-    if (session) {
-      res.json({ 
-        valid: true, 
-        sessionId,
-        message: 'Session is valid and active' 
-      })
-    } else {
-      res.json({ 
-        valid: false, 
-        error: 'Session not found or inactive' 
-      })
-    }
-  } catch (error) {
-    console.error('Session validation error:', error)
-    res.status(500).json({ 
-      valid: false, 
-      error: 'Failed to validate session' 
-    })
-  }
-})
-
 app.use((err, req, res, next) => {
   console.error(err.stack)
   res.status(500).json({ error: 'Something went wrong!' })
@@ -934,19 +859,6 @@ app.use((err, req, res, next) => {
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' })
 })
-
-const cleanupExpiredSessions = async () => {
-  try {
-    const cleanedCount = await Session.cleanupExpired()
-    if (cleanedCount > 0) {
-      console.log(`🧹 Cleaned up ${cleanedCount} expired sessions`)
-    }
-  } catch (error) {
-    console.error('Error cleaning up sessions:', error)
-  }
-}
-
-setInterval(cleanupExpiredSessions, 60 * 60 * 1000)
 
 const startServer = async () => {
   try {
@@ -958,10 +870,6 @@ const startServer = async () => {
     console.log('🔧 Starting database initialization...')
     await initDatabase()
     console.log('✅ Database initialized')
-    
-    console.log('🔧 Starting session cleanup...')
-    await cleanupExpiredSessions()
-    console.log('✅ Expired sessions cleaned up')
     
     // Initialize Google Cloud client early to avoid startup delays
     try {

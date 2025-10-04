@@ -8,6 +8,7 @@ class User {
     this.email = data.email;
     this.passwordHash = data.password_hash;
     this.isActive = data.is_active;
+    this.userCode = data.user_code;
     this.totpSecret = data.totp_secret;
     this.totpEnabled = data.totp_enabled;
     this.totpBackupCodes = data.totp_backup_codes;
@@ -219,12 +220,108 @@ class User {
     }
   }
 
+  static async generateUserCode() {
+    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let code;
+    let isUnique = false;
+    let attempts = 0;
+    const maxAttempts = 100;
+
+    while (!isUnique && attempts < maxAttempts) {
+      // Generate a random code between 3-8 characters
+      const length = Math.floor(Math.random() * 6) + 3; // 3-8 characters
+      code = '';
+      for (let i = 0; i < length; i++) {
+        code += characters.charAt(Math.floor(Math.random() * characters.length));
+      }
+
+      // Check if code is unique
+      const existingUser = await getQuery(
+        `SELECT id FROM users WHERE user_code = $1`,
+        [code]
+      );
+
+      if (!existingUser) {
+        isUnique = true;
+      }
+      attempts++;
+    }
+
+    if (!isUnique) {
+      throw new Error('Unable to generate unique user code after maximum attempts');
+    }
+
+    return code;
+  }
+
+  static async findUserByCode(userCode) {
+    try {
+      const userData = await getQuery(
+        `SELECT * FROM users WHERE user_code = $1 AND is_active = true`,
+        [userCode]
+      );
+
+      if (!userData) {
+        return null;
+      }
+
+      return new User(userData);
+    } catch (error) {
+      console.error('Error finding user by code:', error);
+      throw error;
+    }
+  }
+
+  static async setUserCode(userId, userCode) {
+    try {
+      // Validate user code format
+      if (!userCode || userCode.length < 3 || userCode.length > 8) {
+        throw new Error('User code must be between 3 and 8 characters');
+      }
+
+      // Check if code is already taken
+      const existingUser = await getQuery(
+        `SELECT id FROM users WHERE user_code = $1 AND id != $2`,
+        [userCode, userId]
+      );
+
+      if (existingUser) {
+        throw new Error('User code is already taken');
+      }
+
+      await runQuery(
+        `UPDATE users SET user_code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+        [userCode, userId]
+      );
+
+      return true;
+    } catch (error) {
+      console.error('Error setting user code:', error);
+      throw error;
+    }
+  }
+
+  static async clearUserCode(userId) {
+    try {
+      await runQuery(
+        `UPDATE users SET user_code = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+        [userId]
+      );
+
+      return true;
+    } catch (error) {
+      console.error('Error clearing user code:', error);
+      throw error;
+    }
+  }
+
   toJSON() {
     return {
       id: this.id,
       name: this.name,
       email: this.email,
       isActive: this.isActive,
+      userCode: this.userCode,
       totpEnabled: this.totpEnabled,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt
