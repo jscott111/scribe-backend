@@ -28,11 +28,14 @@ module.exports = {
   // CORS
   CORS_ORIGIN: 'http://speaker.localhost:5173,http://listener.localhost:5173,http://api.localhost:3001',
   
+  // Frontend URLs
+  FRONTEND_URL: 'http://speaker.localhost:5173',
+  TRANSLATION_URL: 'http://listener.localhost:5173',
+  
   // Logging
   LOG_LEVEL: 'debug',
 
   SMTP_USER: 'johnascott14@gmail.com',
   SMTP_PASS: '3557321Joh--',
-  FROM_EMAIL: 'reset-password@scribe-ai.ca',
-  FRONTEND_URL: 'http://localhost:3000'
+  FROM_EMAIL: 'reset-password@scribe-ai.ca'
 }

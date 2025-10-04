@@ -166,6 +166,36 @@ const runMigrations = async () => {
         CREATE INDEX idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
         CREATE INDEX idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at);
       `
+    },
+    {
+      filename: '20250110000000_add_user_code_to_users.sql',
+      sql: `
+        -- Add user_code field to users table
+        -- This field will be used instead of sessions for user identification
+        ALTER TABLE users ADD COLUMN user_code VARCHAR(8) UNIQUE;
+
+        -- Create index on user_code for faster lookups
+        CREATE INDEX IF NOT EXISTS idx_users_user_code ON users(user_code);
+
+        -- Add constraint to ensure user_code is between 3 and 8 characters
+        ALTER TABLE users ADD CONSTRAINT check_user_code_length 
+        CHECK (user_code IS NULL OR (LENGTH(user_code) >= 3 AND LENGTH(user_code) <= 8));
+      `
+    },
+    {
+      filename: '20250110000001_remove_sessions_table.sql',
+      sql: `
+        -- Remove sessions table as we're moving to user codes
+        -- This migration should be run after ensuring all session-based functionality has been migrated
+
+        -- Drop indexes first
+        DROP INDEX IF EXISTS idx_sessions_user_id;
+        DROP INDEX IF EXISTS idx_sessions_is_active;
+        DROP INDEX IF EXISTS idx_sessions_expires_at;
+
+        -- Drop the sessions table
+        DROP TABLE IF EXISTS sessions;
+      `
     }
   ];
 

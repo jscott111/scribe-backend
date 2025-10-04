@@ -8,6 +8,7 @@ const User = require('../models/User');
 const PasswordResetToken = require('../models/PasswordResetToken');
 const emailService = require('../services/emailService');
 const { generateToken, generateRefreshToken, authenticateToken } = require('../middleware/auth');
+const config = require('../config');
 
 const router = express.Router();
 
@@ -69,6 +70,16 @@ router.post('/register', validateRegistration, async (req, res) => {
     const finalPasswordHash = `${hashedPassword}:${salt}`;
     const user = await User.create(name, email, finalPasswordHash);
 
+    // Automatically generate a user code for new users
+    let userCode = null;
+    try {
+      userCode = await User.generateUserCode();
+      await User.setUserCode(user.id, userCode);
+    } catch (error) {
+      console.error('Failed to generate user code for new user:', error);
+      // Continue without user code - user can generate one later
+    }
+
     const accessToken = generateToken(user);
     const refreshToken = generateRefreshToken(user);
 
@@ -78,6 +89,7 @@ router.post('/register', validateRegistration, async (req, res) => {
         id: user.id,
         email: user.email,
         name: user.name,
+        userCode: userCode,
         createdAt: user.createdAt
       },
       tokens: {
@@ -147,6 +159,18 @@ router.post('/login', validateLogin, async (req, res) => {
       }
     }
 
+    // Ensure user has a code - generate one if they don't
+    let userCode = user.userCode;
+    if (!userCode) {
+      try {
+        userCode = await User.generateUserCode();
+        await User.setUserCode(user.id, userCode);
+      } catch (error) {
+        console.error('Failed to generate user code for existing user:', error);
+        // Continue without user code - user can generate one later
+      }
+    }
+
     const accessToken = generateToken(user);
     const refreshToken = generateRefreshToken(user);
 
@@ -156,6 +180,7 @@ router.post('/login', validateLogin, async (req, res) => {
         id: user.id,
         email: user.email,
         name: user.name,
+        userCode: userCode,
         createdAt: user.createdAt
       },
       tokens: {
@@ -236,17 +261,35 @@ router.post('/logout', authenticateToken, (req, res) => {
  * @desc    Get current user profile
  * @access  Private
  */
-router.get('/me', authenticateToken, (req, res) => {
-  res.json({
-    user: {
-      id: req.user.id,
-      email: req.user.email,
-      name: req.user.name,
-      createdAt: req.user.createdAt,
-      updatedAt: req.user.updatedAt,
-      totpEnabled: req.user.totpEnabled
+router.get('/me', authenticateToken, async (req, res) => {
+  try {
+    // Get fresh user data including user code
+    const user = await User.findUserById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found',
+        code: 'USER_NOT_FOUND'
+      });
     }
-  });
+
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        userCode: user.userCode,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+        totpEnabled: user.totpEnabled
+      }
+    });
+  } catch (error) {
+    console.error('Get user profile error:', error.message);
+    res.status(500).json({
+      error: 'Failed to get user profile',
+      message: error.message
+    });
+  }
 });
 
 
@@ -734,6 +777,220 @@ router.get('/verify-reset-token', async (req, res) => {
     console.error('Token verification error:', error.message);
     res.status(500).json({
       error: 'Failed to verify token',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * @route   GET /api/auth/user-code
+ * @desc    Get current user's code
+ * @access  Private
+ */
+router.get('/user-code', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findUserById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found',
+        code: 'USER_NOT_FOUND'
+      });
+    }
+
+    res.json({
+      userCode: user.userCode,
+      hasCode: !!user.userCode
+    });
+
+  } catch (error) {
+    console.error('Get user code error:', error.message);
+    res.status(500).json({
+      error: 'Failed to get user code',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * @route   POST /api/auth/generate-user-code
+ * @desc    Generate a new user code for the current user
+ * @access  Private
+ */
+router.post('/generate-user-code', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // Generate a new unique user code
+    const userCode = await User.generateUserCode();
+    
+    // Set the code for the user
+    await User.setUserCode(userId, userCode);
+
+    res.json({
+      message: 'User code generated successfully',
+      userCode
+    });
+
+  } catch (error) {
+    console.error('Generate user code error:', error.message);
+    res.status(500).json({
+      error: 'Failed to generate user code',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * @route   POST /api/auth/set-user-code
+ * @desc    Set a custom user code for the current user
+ * @access  Private
+ */
+router.post('/set-user-code', authenticateToken, [
+  body('userCode')
+    .isLength({ min: 3, max: 8 })
+    .withMessage('User code must be between 3 and 8 characters')
+    .matches(/^[A-Z0-9]+$/)
+    .withMessage('User code must contain only uppercase letters and numbers')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: errors.array()
+      });
+    }
+
+    const { userCode } = req.body;
+    const userId = req.user.id;
+    
+    // Set the custom user code
+    await User.setUserCode(userId, userCode);
+
+    res.json({
+      message: 'User code set successfully',
+      userCode
+    });
+
+  } catch (error) {
+    console.error('Set user code error:', error.message);
+    
+    if (error.message === 'User code is already taken') {
+      return res.status(409).json({
+        error: 'User code is already taken',
+        code: 'CODE_TAKEN'
+      });
+    }
+    
+    res.status(500).json({
+      error: 'Failed to set user code',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * @route   DELETE /api/auth/user-code
+ * @desc    Clear the current user's code
+ * @access  Private
+ */
+router.delete('/user-code', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    await User.clearUserCode(userId);
+
+    res.json({
+      message: 'User code cleared successfully'
+    });
+
+  } catch (error) {
+    console.error('Clear user code error:', error.message);
+    res.status(500).json({
+      error: 'Failed to clear user code',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * @route   GET /api/auth/user-by-code
+ * @desc    Get user information by user code
+ * @access  Public
+ */
+router.get('/user-by-code', async (req, res) => {
+  try {
+    const { code } = req.query;
+
+    if (!code) {
+      return res.status(400).json({
+        error: 'User code is required',
+        code: 'MISSING_USER_CODE'
+      });
+    }
+
+    const user = await User.findUserByCode(code);
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found for this code',
+        code: 'USER_NOT_FOUND'
+      });
+    }
+
+    res.json({
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        userCode: user.userCode
+      }
+    });
+
+  } catch (error) {
+    console.error('Get user by code error:', error.message);
+    res.status(500).json({
+      error: 'Failed to get user by code',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * @route   GET /api/auth/connection-info
+ * @desc    Get connection information for QR code and sharing
+ * @access  Private
+ */
+router.get('/connection-info', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findUserById(req.user.id);
+    if (!user || !user.userCode) {
+      return res.status(404).json({
+        error: 'User code not found',
+        code: 'NO_USER_CODE'
+      });
+    }
+
+    // Get the translation URL from config
+    const translationUrl = config.TRANSLATION_URL || `${req.protocol}://${req.get('host')}`;
+
+    // Generate connection URL for listeners
+    const connectionUrl = `${translationUrl}/listen?code=${user.userCode}`;
+    
+    // Generate QR code data URL
+    const QRCode = require('qrcode');
+    const qrCodeUrl = await QRCode.toDataURL(connectionUrl);
+
+    res.json({
+      userCode: user.userCode,
+      connectionUrl,
+      qrCodeUrl,
+      shareText: `Join my Scribe session: ${connectionUrl}`
+    });
+
+  } catch (error) {
+    console.error('Get connection info error:', error.message);
+    res.status(500).json({
+      error: 'Failed to get connection info',
       message: error.message
     });
   }
