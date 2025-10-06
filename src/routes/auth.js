@@ -974,7 +974,7 @@ router.get('/connection-info', authenticateToken, async (req, res) => {
     const translationUrl = config.TRANSLATION_URL || `${req.protocol}://${req.get('host')}`;
 
     // Generate connection URL for listeners
-    const connectionUrl = `${translationUrl}/listen?code=${user.userCode}`;
+    const connectionUrl = `${translationUrl}?code=${user.userCode}`;
     
     // Generate QR code data URL
     const QRCode = require('qrcode');
