@@ -147,8 +147,10 @@ class SpeechToTextService {
   /**
    * Start streaming recognition with Google Cloud Speech-to-Text
    */
-  async startStreamingRecognition(languageCode, callbacks) {
+  async startStreamingRecognition(languageCode, speechEndTimeout = 1.0, callbacks) {
     const client = await this.getSpeechClient();
+    
+    console.log(`🎤 Starting Google Speech recognition with speechEndTimeout: ${speechEndTimeout}s`);
     
     const request = {
       config: {
@@ -164,10 +166,10 @@ class SpeechToTextService {
         enableVoiceActivityEvents: true,
         voiceActivityTimeout: {
           speechStartTimeout: {
-            seconds: 0.1, // Wait 0.5 seconds for speech to start
+            seconds: 0.1, // Wait 0.1 seconds for speech to start
           },
           speechEndTimeout: {
-            seconds: 0.1
+            seconds: speechEndTimeout // Use the dynamic timeout from frontend
           }
         }
       }

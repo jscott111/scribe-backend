@@ -366,7 +366,7 @@ io.on('connection', (socket) => {
         return
       }
 
-      const { 
+      const {
         audioData, 
         sourceLanguage, 
         bubbleId, 
@@ -375,8 +375,10 @@ io.on('connection', (socket) => {
         finalTranscript,
         wordCount,
         maxWordsPerBubble = 15,
-        speechEndTimeout = 2.0
+        speechEndTimeout = 1.0
       } = data
+
+      console.log(`🎤 Received speechEndTimeout: ${speechEndTimeout}s from frontend`)
 
       const connection = activeConnections.get(socket.id)
       if (connection) {
@@ -403,7 +405,7 @@ io.on('connection', (socket) => {
             if (!streamingSessions.has(socket.id)) {
               console.log('🎤 Starting Google Cloud streaming recognition...');
               
-              const recognizeStream = await speechToTextService.startStreamingRecognition(sourceLanguage, {
+              const recognizeStream = await speechToTextService.startStreamingRecognition(sourceLanguage, speechEndTimeout, {
                 onResult: async (result) => {
                   // Send transcription result to frontend
                   socket.emit('transcriptionUpdate', {
@@ -558,7 +560,7 @@ io.on('connection', (socket) => {
                   await new Promise(resolve => setTimeout(resolve, 100));
                   
                   // Create new stream
-                  const newRecognizeStream = await speechToTextService.startStreamingRecognition(sourceLanguage, {
+                  const newRecognizeStream = await speechToTextService.startStreamingRecognition(sourceLanguage, speechEndTimeout, {
                     onResult: async (result) => {
                       socket.emit('transcriptionUpdate', {
                         transcript: result.transcript,
