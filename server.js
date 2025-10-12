@@ -122,8 +122,24 @@ io.on('connection', (socket) => {
     isStreaming: false,
     sourceLanguage: null,
     targetLanguage: null,
-    needsTokenRefresh: socket.needsTokenRefresh || false
+    needsTokenRefresh: socket.needsTokenRefresh || false,
+    lastPing: Date.now(),
+    pingTimeout: null,
+    connectionQuality: 'good', // good, poor, critical
+    messageCount: 0,
+    errorCount: 0,
+    lastActivity: Date.now()
   })
+
+  // Set up heartbeat mechanism
+  const connection = activeConnections.get(socket.id)
+  if (connection) {
+    // Set initial ping timeout (30 seconds)
+    connection.pingTimeout = setTimeout(() => {
+      console.log(`💔 Heartbeat timeout for socket ${socket.id}, disconnecting...`)
+      socket.disconnect(true)
+    }, 30000)
+  }
 
   if (socket.needsTokenRefresh) {
     socket.emit('tokenExpired', {
@@ -133,6 +149,40 @@ io.on('connection', (socket) => {
   }
   
   emitConnectionCount(socket.userCode)
+
+  // Handle ping/pong for heartbeat
+  socket.on('ping', () => {
+    const connection = activeConnections.get(socket.id)
+    if (connection) {
+      connection.lastPing = Date.now()
+      connection.lastActivity = Date.now()
+      
+      // Update connection quality based on ping frequency
+      const timeSinceLastPing = Date.now() - connection.lastPing
+      if (timeSinceLastPing > 20000) {
+        connection.connectionQuality = 'poor'
+      } else if (timeSinceLastPing > 30000) {
+        connection.connectionQuality = 'critical'
+      } else {
+        connection.connectionQuality = 'good'
+      }
+      
+      // Clear existing timeout and set new one
+      if (connection.pingTimeout) {
+        clearTimeout(connection.pingTimeout)
+      }
+      
+      // Adaptive timeout based on connection quality
+      const timeoutDuration = connection.connectionQuality === 'critical' ? 15000 : 
+                            connection.connectionQuality === 'poor' ? 25000 : 30000
+      
+      connection.pingTimeout = setTimeout(() => {
+        console.log(`💔 Heartbeat timeout for socket ${socket.id} (quality: ${connection.connectionQuality}), disconnecting...`)
+        socket.disconnect(true)
+      }, timeoutDuration)
+    }
+    socket.emit('pong')
+  })
 
   socket.on('refreshToken', async (data) => {
     try {
@@ -207,6 +257,8 @@ io.on('connection', (socket) => {
       if (connection) {
         connection.isStreaming = true
         connection.sourceLanguage = sourceLanguage
+        connection.messageCount++
+        connection.lastActivity = Date.now()
       }
 
       const currentConnection = activeConnections.get(socket.id)
@@ -282,6 +334,22 @@ io.on('connection', (socket) => {
       
     } catch (error) {
       console.error('Error processing speech transcription:', error)
+      
+      // Track error for connection quality monitoring
+      const connection = activeConnections.get(socket.id)
+      if (connection) {
+        connection.errorCount++
+        connection.lastActivity = Date.now()
+        
+        // Update connection quality based on error rate
+        const errorRate = connection.errorCount / Math.max(connection.messageCount, 1)
+        if (errorRate > 0.1) {
+          connection.connectionQuality = 'critical'
+        } else if (errorRate > 0.05) {
+          connection.connectionQuality = 'poor'
+        }
+      }
+      
       socket.emit('error', { message: 'Failed to process transcription: ' + error.message })
     }
   })
@@ -448,6 +516,19 @@ io.on('connection', (socket) => {
                 },
                 onError: (error) => {
                   console.error('❌ Google Cloud streaming error:', error);
+                  
+                  // Attempt to recover from common errors
+                  if (error.code === 14 || error.message.includes('UNAVAILABLE')) {
+                    console.log('🔄 Attempting to recover from UNAVAILABLE error...');
+                    setTimeout(() => {
+                      if (socket.connected) {
+                        socket.emit('streamRestart', { 
+                          reason: 'recovery', 
+                          error: error.message 
+                        });
+                      }
+                    }, 1000);
+                  }
                 },
                 onEnd: () => {
                   console.log('🎤 Google Cloud streaming ended');
@@ -588,6 +669,19 @@ io.on('connection', (socket) => {
                     },
                     onError: (error) => {
                       console.error('❌ Google Cloud streaming error:', error);
+                      
+                      // Attempt to recover from common errors
+                      if (error.code === 14 || error.message.includes('UNAVAILABLE')) {
+                        console.log('🔄 Attempting to recover from UNAVAILABLE error...');
+                        setTimeout(() => {
+                          if (socket.connected) {
+                            socket.emit('streamRestart', { 
+                              reason: 'recovery', 
+                              error: error.message 
+                            });
+                          }
+                        }, 1000);
+                      }
                     },
                     onEnd: () => {
                       console.log('🎤 Google Cloud streaming ended');
@@ -764,7 +858,11 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     const connection = activeConnections.get(socket.id)
-    activeConnections.delete(socket.id)
+    
+    // Clean up ping timeout
+    if (connection && connection.pingTimeout) {
+      clearTimeout(connection.pingTimeout)
+    }
     
     // Clean up streaming session
     const recognizeStream = streamingSessions.get(socket.id)
@@ -780,6 +878,21 @@ io.on('connection', (socket) => {
         processedTranscripts.delete(key);
       }
     }
+    
+    // Log connection quality metrics before cleanup
+    if (connection) {
+      const sessionDuration = Date.now() - connection.lastActivity
+      const errorRate = connection.errorCount / Math.max(connection.messageCount, 1)
+      console.log(`📊 Connection metrics for ${socket.user?.email || 'Listener'}:`, {
+        duration: `${Math.round(sessionDuration / 1000)}s`,
+        messages: connection.messageCount,
+        errors: connection.errorCount,
+        errorRate: `${Math.round(errorRate * 100)}%`,
+        quality: connection.connectionQuality
+      })
+    }
+    
+    activeConnections.delete(socket.id)
     
     console.log(`🔌 Client disconnected: ${socket.user?.email || 'Listener'} (${socket.userCode || 'No User Code'})`)
     
@@ -879,6 +992,21 @@ const startServer = async () => {
       console.warn('⚠️ Google Cloud Speech client initialization failed:', error.message)
       console.log('⚠️ Continuing without Google Cloud Speech (transcription will not work)')
     }
+    
+    // Set up periodic cleanup to prevent memory leaks
+    setInterval(() => {
+      const now = Date.now()
+      
+      // Clean up old processed transcripts (older than 10 minutes)
+      for (const [key, timestamp] of processedTranscripts.entries()) {
+        if (now - timestamp > 10 * 60 * 1000) {
+          processedTranscripts.delete(key)
+        }
+      }
+      
+      // Log connection statistics
+      console.log(`📊 Active connections: ${activeConnections.size}, Processed transcripts: ${processedTranscripts.size}`)
+    }, 5 * 60 * 1000) // Run every 5 minutes
     
     server.listen(config.PORT, config.HOST, () => {
       console.log(`🚀 Server running on ${config.HOST}:${config.PORT}`)
