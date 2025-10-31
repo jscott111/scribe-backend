@@ -167,18 +167,22 @@ io.on('connection', async (socket) => {
   socket.on('ping', () => {
     const connection = activeConnections.get(socket.id)
     if (connection) {
-      connection.lastPing = Date.now()
-      connection.lastActivity = Date.now()
+      // Calculate time since last ping BEFORE updating it
+      const timeSinceLastPing = connection.lastPing ? Date.now() - connection.lastPing : 0
       
-      // Update connection quality based on ping frequency
-      const timeSinceLastPing = Date.now() - connection.lastPing
-      if (timeSinceLastPing > 20000) {
-        connection.connectionQuality = 'poor'
-      } else if (timeSinceLastPing > 30000) {
+      // Update connection quality based on ping interval
+      // Expected ping interval is ~15 seconds, so longer intervals indicate poor connection
+      if (timeSinceLastPing > 30000) {
         connection.connectionQuality = 'critical'
+      } else if (timeSinceLastPing > 20000) {
+        connection.connectionQuality = 'poor'
       } else {
         connection.connectionQuality = 'good'
       }
+      
+      // Update last ping time after calculating quality
+      connection.lastPing = Date.now()
+      connection.lastActivity = Date.now()
       
       // Clear existing timeout and set new one
       if (connection.pingTimeout) {
@@ -186,8 +190,8 @@ io.on('connection', async (socket) => {
       }
       
       // Adaptive timeout based on connection quality
-      const timeoutDuration = connection.connectionQuality === 'critical' ? 15000 : 
-                            connection.connectionQuality === 'poor' ? 25000 : 30000
+      const timeoutDuration = connection.connectionQuality === 'critical' ? 20000 : 
+                            connection.connectionQuality === 'poor' ? 30000 : 45000
       
       connection.pingTimeout = setTimeout(() => {
         console.log(`💔 Heartbeat timeout for socket ${socket.id} (quality: ${connection.connectionQuality}), disconnecting...`)
@@ -633,7 +637,7 @@ io.on('connection', async (socket) => {
                           
                           const translationConnections = userCodeConnections.filter(socketId => {
                             const conn = activeConnections.get(socketId);
-                            return conn && !conn.userId && conn.targetLanguage;
+                            return conn && !conn.isStreaming && conn.targetLanguage;
                           });
                           
                           // Send transcription to input clients
@@ -778,7 +782,7 @@ io.on('connection', async (socket) => {
           
           const translationConnections = userCodeConnections.filter(socketId => {
             const conn = activeConnections.get(socketId)
-            return conn && !conn.userId && conn.targetLanguage
+            return conn && !conn.isStreaming && conn.targetLanguage
           })
           
           userCodeConnections.forEach(socketId => {
@@ -1117,9 +1121,71 @@ const startServer = async () => {
         }
       }
       
+      // Health check: detect and clean up stale connections
+      const staleConnectionTimeout = 45000 // 45 seconds (allows for some network delay)
+      const staleSockets = []
+      
+      for (const [socketId, connection] of activeConnections.entries()) {
+        const socket = io.sockets.sockets.get(socketId)
+        
+        // Check if socket is still connected
+        if (!socket || !socket.connected) {
+          console.log(`🧹 Cleaning up disconnected socket: ${socketId}`)
+          staleSockets.push(socketId)
+          continue
+        }
+        
+        // Check if connection is stale (no ping received in too long)
+        const timeSinceLastPing = now - connection.lastPing
+        if (timeSinceLastPing > staleConnectionTimeout) {
+          console.log(`🧹 Detected stale connection: ${socketId} (last ping: ${Math.round(timeSinceLastPing / 1000)}s ago)`)
+          staleSockets.push(socketId)
+        }
+      }
+      
+      // Clean up stale sockets
+      for (const socketId of staleSockets) {
+        const socket = io.sockets.sockets.get(socketId)
+        const connection = activeConnections.get(socketId)
+        
+        if (connection && connection.pingTimeout) {
+          clearTimeout(connection.pingTimeout)
+        }
+        
+        // Clean up streaming session if exists
+        const recognizeStream = streamingSessions.get(socketId)
+        if (recognizeStream) {
+          speechToTextService.endStreamingRecognition(recognizeStream)
+          streamingSessions.delete(socketId)
+        }
+        
+        // Clean up processed transcripts for this socket
+        const socketPrefix = `${socketId}-`
+        for (const [key, _] of processedTranscripts.entries()) {
+          if (key.startsWith(socketPrefix)) {
+            processedTranscripts.delete(key)
+          }
+        }
+        
+        // Emit connection count update before cleanup
+        if (connection?.userCode) {
+          emitConnectionCount(connection.userCode)
+        }
+        
+        // Remove from active connections
+        activeConnections.delete(socketId)
+        
+        // Disconnect the socket if it still exists
+        if (socket && socket.connected) {
+          socket.disconnect(true)
+        }
+        
+        console.log(`✅ Cleaned up stale connection: ${socketId}`)
+      }
+      
       // Log connection statistics
-      console.log(`📊 Active connections: ${activeConnections.size}, Processed transcripts: ${processedTranscripts.size}`)
-    }, 5 * 60 * 1000) // Run every 5 minutes
+      console.log(`📊 Active connections: ${activeConnections.size}, Processed transcripts: ${processedTranscripts.size}, Cleaned: ${staleSockets.length}`)
+    }, 30000) // Run every 30 seconds for better connection monitoring
     
     console.log('✅ Server is ready to accept connections')
   } catch (error) {
