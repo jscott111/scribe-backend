@@ -17,10 +17,6 @@ module.exports = {
   JWT_ACCESS_EXPIRES_IN: '30d',
   JWT_REFRESH_EXPIRES_IN: '60d',
   
-  // Azure Translator
-  AZURE_TRANSLATOR_KEY: process.env.AZURE_TRANSLATOR_KEY,
-  AZURE_TRANSLATOR_REGION: process.env.AZURE_TRANSLATOR_REGION,
-  
   // CORS
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'https://speaker-staging.yourdomain.com,https://listener-staging.yourdomain.com',
   

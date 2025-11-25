@@ -17,11 +17,6 @@ module.exports = {
   JWT_ACCESS_EXPIRES_IN: '30d',
   JWT_REFRESH_EXPIRES_IN: '60d',
   
-  // Azure Translator
-  AZURE_TRANSLATOR_KEY: process.env.AZURE_TRANSLATOR_KEY,
-  AZURE_TRANSLATOR_REGION: process.env.AZURE_TRANSLATOR_REGION,
-  AZURE_TRANSLATOR_ENDPOINT: process.env.AZURE_TRANSLATOR_ENDPOINT || 'https://api.cognitive.microsofttranslator.com',
-  
   // CORS - Allow your frontend domains
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'https://speaker.scribe-ai.ca,https://listener.scribe-ai.ca,https://api.scribe-ai.ca',
   

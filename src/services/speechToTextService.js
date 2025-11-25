@@ -3,6 +3,7 @@ const speech = require('@google-cloud/speech');
 const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
 const config = require('../config');
 const { spawn } = require('child_process');
+// No normalization needed - frontend sends proper locale codes (en-US, fr-FR, etc.)
 
 class SpeechToTextService {
   constructor() {
@@ -150,7 +151,8 @@ class SpeechToTextService {
   async startStreamingRecognition(languageCode, speechEndTimeout = 1.0, callbacks) {
     const client = await this.getSpeechClient();
     
-    console.log(`🎤 Starting Google Speech recognition with speechEndTimeout: ${speechEndTimeout}s`);
+    // Frontend sends proper locale codes (en-US, fr-FR, etc.) - use directly
+    console.log(`🎤 Starting Google Speech recognition with language: ${languageCode}, speechEndTimeout: ${speechEndTimeout}s`);
     
     const request = {
       config: {
@@ -159,24 +161,20 @@ class SpeechToTextService {
         languageCode: languageCode,
         enableAutomaticPunctuation: true,
         model: 'latest_long', // Use latest model for better accuracy
-        enableInterimResults: true, // Explicitly enable interim results
       },
       interimResults: true, // Get interim results for real-time display
-      streamingFeatures: {
-        enableVoiceActivityEvents: true,
-        voiceActivityTimeout: {
-          speechStartTimeout: {
-            seconds: 0.1, // Wait 0.1 seconds for speech to start
-          },
-          speechEndTimeout: {
-            seconds: speechEndTimeout // Use the dynamic timeout from frontend
-          }
-        }
-      }
+      singleUtterance: false // Allow continuous streaming
     };
 
     // Create streaming recognition request
-    const recognizeStream = client.streamingRecognize(request);
+    let recognizeStream;
+    try {
+      recognizeStream = client.streamingRecognize(request);
+      console.log('✅ Stream created successfully');
+    } catch (error) {
+      console.error('❌ Failed to create recognize stream:', error);
+      throw new Error(`Failed to create recognition stream: ${error.message}`);
+    }
 
     // Track stream start time for 5-minute limit
     const streamStartTime = Date.now();
@@ -211,7 +209,17 @@ class SpeechToTextService {
 
     recognizeStream.on('error', (error) => {
       console.error('❌ Google Cloud streaming error:', error);
+      console.error('Error details:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        metadata: error.metadata
+      });
       clearTimeout(restartTimer);
+      // Mark stream as destroyed on error
+      if (recognizeStream) {
+        recognizeStream.destroyed = true;
+      }
       if (callbacks && callbacks.onError) {
         callbacks.onError(error);
       }
