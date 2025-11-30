@@ -985,11 +985,26 @@ const startServer = async () => {
     console.log(`🌐 Port: ${config.PORT}`)
     console.log(`🏠 Host: ${config.HOST}`)
     
-    console.log('🔧 Starting database initialization...')
-    await initDatabase()
-    console.log('✅ Database initialized')
+    // Start listening on the port FIRST to satisfy Cloud Run health checks
+    // This ensures the container responds to health checks quickly
+    await new Promise((resolve, reject) => {
+      server.listen(config.PORT, config.HOST, () => {
+        console.log(`🚀 Server listening on ${config.HOST}:${config.PORT}`)
+        resolve()
+      })
+      server.on('error', reject)
+    })
     
-    // Initialize Google Cloud client early to avoid startup delays
+    console.log('🔧 Starting database initialization...')
+    try {
+      await initDatabase()
+      console.log('✅ Database initialized')
+    } catch (dbError) {
+      console.error('❌ Database initialization failed:', dbError.message)
+      console.log('⚠️ Server will continue but database features may not work')
+    }
+    
+    // Initialize Google Cloud client in the background to avoid startup delays
     try {
       await speechToTextService.getSpeechClient()
       console.log('✅ Google Cloud Speech client initialized')
@@ -1013,10 +1028,7 @@ const startServer = async () => {
       console.log(`📊 Active connections: ${activeConnections.size}, Processed transcripts: ${processedTranscripts.size}`)
     }, 5 * 60 * 1000) // Run every 5 minutes
     
-    server.listen(config.PORT, config.HOST, () => {
-      console.log(`🚀 Server running on ${config.HOST}:${config.PORT}`)
-      console.log('✅ Server is ready to accept connections')
-    })
+    console.log('✅ Server is ready to accept connections')
   } catch (error) {
     console.error('❌ Failed to start server:', error)
     process.exit(1)
