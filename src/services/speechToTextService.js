@@ -1,6 +1,5 @@
 const fs = require('fs');
 const speech = require('@google-cloud/speech');
-const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
 const config = require('../config');
 const { spawn } = require('child_process');
 // No normalization needed - frontend sends proper locale codes (en-US, fr-FR, etc.)
@@ -8,10 +7,9 @@ const { spawn } = require('child_process');
 class SpeechToTextService {
   constructor() {
     this.projectId = config.GOOGLE_CLOUD_PROJECT_ID;
-    this.secretClient = new SecretManagerServiceClient();
     this.client = null;
     this.credentials = null;
-    this.initializeClient();
+    // Note: Client initialization is deferred to getSpeechClient() for faster startup
   }
 
   async initializeCredentials() {
@@ -271,9 +269,6 @@ class SpeechToTextService {
     }
   }
 
-  initializeClient() {
-    // Service initialized
-  }
 }
 
 module.exports = new SpeechToTextService();
