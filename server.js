@@ -10,6 +10,7 @@ const authRoutes = require('./src/routes/auth')
 const { initDatabase, runQuery } = require('./src/database/database')
 const User = require('./src/models/User')
 const speechToTextService = require('./src/services/speechToTextService')
+const googleTranslationService = require('./src/services/googleTranslationService')
 const app = express()
 const server = http.createServer(app)
 
@@ -403,9 +404,10 @@ io.on('connection', (socket) => {
           if (audioFormat === 'LINEAR16') {
             // Start streaming recognition on first chunk for this socket
             if (!streamingSessions.has(socket.id)) {
-              console.log('🎤 Starting Google Cloud streaming recognition...');
+              console.log(`🎤 Starting Google Cloud streaming recognition for socket ${socket.id}, sourceLanguage: ${sourceLanguage}, speechEndTimeout: ${speechEndTimeout}s`);
               
-              const recognizeStream = await speechToTextService.startStreamingRecognition(sourceLanguage, speechEndTimeout, {
+              try {
+                const recognizeStream = await speechToTextService.startStreamingRecognition(sourceLanguage, speechEndTimeout, {
                 onResult: async (result) => {
                   // Send transcription result to frontend
                   socket.emit('transcriptionUpdate', {
@@ -694,18 +696,39 @@ io.on('connection', (socket) => {
                   // Store new stream
                   streamingSessions.set(socket.id, newRecognizeStream);
                 }
-              });
-              
-              // Store the stream for this socket
-              streamingSessions.set(socket.id, recognizeStream);
+                });
+                
+                // Store the stream for this socket
+                if (recognizeStream) {
+                  streamingSessions.set(socket.id, recognizeStream);
+                  console.log(`✅ Stream created and stored for socket ${socket.id}`);
+                } else {
+                  console.error('❌ Stream creation returned null/undefined for socket:', socket.id);
+                }
+              } catch (streamError) {
+                console.error('❌ Failed to create streaming recognition:', streamError);
+                console.error('Error details:', {
+                  message: streamError.message,
+                  stack: streamError.stack,
+                  sourceLanguage: sourceLanguage
+                });
+                socket.emit('error', {
+                  message: 'Failed to start speech recognition: ' + streamError.message
+                });
+                return; // Don't try to send audio if stream creation failed
+              }
             }
             
             // Send audio chunk to Google Cloud streaming
             const recognizeStream = streamingSessions.get(socket.id);
-            if (recognizeStream) {
+            if (recognizeStream && !recognizeStream.destroyed) {
               speechToTextService.sendAudioToStream(recognizeStream, audioBuffer);
             } else {
-              console.error('❌ No stream found for socket:', socket.id);
+              console.error('❌ No valid stream found for socket:', socket.id, {
+                hasStream: !!recognizeStream,
+                isDestroyed: recognizeStream?.destroyed,
+                sessionExists: streamingSessions.has(socket.id)
+              });
             }
           } else {
             console.log('🎤 Stream already exists for socket:', socket.id, '- using existing stream');
@@ -904,40 +927,20 @@ io.on('connection', (socket) => {
 
 async function processTranscription(transcription, sourceLanguage, targetLanguage) {
   try {
-    const createClient = require('@azure-rest/ai-translation-text').default
-    
-    const client = createClient(config.AZURE_TRANSLATOR_ENDPOINT, {
-      key: config.AZURE_TRANSLATOR_KEY,
-      region: config.AZURE_TRANSLATOR_REGION
-    })
-    
-    const azureSourceLang = sourceLanguage
-    const azureTargetLang = targetLanguage
-    
-    const result = await client.path('/translate').post({
-      body: [{
-        text: transcription
-      }],
-      queryParameters: {
-        'api-version': '3.0',
-        'from': azureSourceLang,
-        'to': azureTargetLang
-      }
-    })
-    
-    if (result.body && result.body[0] && result.body[0].translations && result.body[0].translations[0]) {
-      const translatedText = result.body[0].translations[0].text
-      return translatedText
-    } else {
-      console.error('❌ Invalid response structure:', {
-        hasBody: !!result.body,
-        bodyLength: result.body?.length,
-        firstItem: result.body?.[0],
-        hasTranslations: result.body?.[0]?.translations,
-        translationsLength: result.body?.[0]?.translations?.length
-      });
-      throw new Error('Invalid response from Azure Translator')
+    // If source and target languages are the same, return the transcription directly
+    if (sourceLanguage === targetLanguage) {
+      console.log(`🔄 Source and target languages match (${sourceLanguage}), returning transcription directly`);
+      return transcription;
     }
+
+    // Use Google Cloud Translation API
+    const translatedText = await googleTranslationService.translateText(
+      transcription,
+      sourceLanguage,
+      targetLanguage
+    );
+    
+    return translatedText;
     
   } catch (error) {
     console.error('❌ Translation error:', error.message)

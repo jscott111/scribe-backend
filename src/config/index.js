@@ -26,9 +26,6 @@ const finalConfig = {
   JWT_SECRET: process.env.JWT_SECRET || config.JWT_SECRET,
   JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || config.JWT_ACCESS_EXPIRES_IN,
   JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || config.JWT_REFRESH_EXPIRES_IN,
-  AZURE_TRANSLATOR_KEY: process.env.AZURE_TRANSLATOR_KEY || config.AZURE_TRANSLATOR_KEY,
-  AZURE_TRANSLATOR_REGION: process.env.AZURE_TRANSLATOR_REGION || config.AZURE_TRANSLATOR_REGION,
-  AZURE_TRANSLATOR_ENDPOINT: process.env.AZURE_TRANSLATOR_ENDPOINT || config.AZURE_TRANSLATOR_ENDPOINT,
   GOOGLE_CLOUD_PROJECT_ID: process.env.GOOGLE_CLOUD_PROJECT_ID || config.GOOGLE_CLOUD_PROJECT_ID,
   GOOGLE_CLOUD_API_KEY: process.env.GOOGLE_CLOUD_API_KEY || config.GOOGLE_CLOUD_API_KEY,
   CORS_ORIGIN: process.env.CORS_ORIGIN || config.CORS_ORIGIN,
@@ -38,7 +35,7 @@ const finalConfig = {
 };
 
 if (environment === 'prod') {
-  const requiredVars = ['JWT_SECRET', 'AZURE_TRANSLATOR_KEY', 'AZURE_TRANSLATOR_REGION', 'CORS_ORIGIN', 'GOOGLE_CLOUD_PROJECT_ID'];
+  const requiredVars = ['JWT_SECRET', 'CORS_ORIGIN', 'GOOGLE_CLOUD_PROJECT_ID'];
   const missingVars = requiredVars.filter(varName => !finalConfig[varName]);
   
   if (missingVars.length > 0) {
