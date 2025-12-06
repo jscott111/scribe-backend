@@ -5,12 +5,13 @@ const cors = require('cors')
 const path = require('path')
 require('dotenv').config()
 const config = require('./src/config')
-const { authenticateToken, authenticateSocket } = require('./src/middleware/auth')
+const { authenticateSocket } = require('./src/middleware/auth')
 const authRoutes = require('./src/routes/auth')
-const { initDatabase, runQuery } = require('./src/database/database')
+const { initDatabase } = require('./src/database/database')
 const User = require('./src/models/User')
 const speechToTextService = require('./src/services/speechToTextService')
 const googleTranslationService = require('./src/services/googleTranslationService')
+const textToSpeechService = require('./src/services/textToSpeechService')
 const app = express()
 const server = http.createServer(app)
 
@@ -967,6 +968,54 @@ app.get('/health', (req, res) => {
       timestamp: new Date().toISOString()
     })
   }
+})
+
+app.post('/api/tts', async (req, res) => {
+  try {
+    const { text, languageCode } = req.body
+    
+    if (!text || !languageCode) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: text and languageCode' 
+      })
+    }
+
+    // Check if language is supported
+    if (!textToSpeechService.isLanguageSupported(languageCode)) {
+      return res.status(400).json({ 
+        error: `Language ${languageCode} is not supported for text-to-speech` 
+      })
+    }
+
+    // Generate audio
+    const audioBuffer = await textToSpeechService.synthesizeSpeech(text, languageCode)
+    
+    // Send audio as MP3
+    res.set({
+      'Content-Type': 'audio/mpeg',
+      'Content-Length': audioBuffer.length,
+      'Cache-Control': 'no-cache'
+    })
+    
+    res.send(audioBuffer)
+  } catch (error) {
+    console.error('TTS endpoint error:', error)
+    res.status(500).json({ 
+      error: 'Text-to-speech synthesis failed: ' + error.message 
+    })
+  }
+})
+
+// Check TTS language support
+app.get('/api/tts/supported', (req, res) => {
+  const { languageCode } = req.query
+  
+  if (!languageCode) {
+    return res.status(400).json({ error: 'Missing languageCode query parameter' })
+  }
+  
+  const supported = textToSpeechService.isLanguageSupported(languageCode)
+  res.json({ languageCode, supported })
 })
 
 app.use((err, req, res, next) => {
