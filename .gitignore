@@ -1,3 +1,5 @@
 node_modules
 .env
-google-credentials.jsonemulator-data/
+google-credentials.json
+*-debug.log
+emulator-data/
