@@ -16,10 +16,12 @@ class TextToSpeechService {
 
     try {
       if (fs.existsSync('./google-credentials.json')) {
+        console.log('🔧 TTS: Loading credentials from local file');
         this.credentials = JSON.parse(fs.readFileSync('./google-credentials.json', 'utf8'));
         return this.credentials;
       }
 
+      console.log('☁️ TTS: Using default service account');
       this.credentials = null;
       return this.credentials;
     } catch (error) {

@@ -25,25 +25,20 @@ const initFirestore = async () => {
         projectId: 'demo-scribe',  // Use demo project for emulator
       });
     } else {
-      // Production: use scribe-db database
-      const databaseId = 'scribe-db';
-      const credentialsPath = path.join(__dirname, '..', '..', 'google-credentials.json');
+      // Production: use default database (no databaseId needed)
+      const localCredentialsPath = path.join(__dirname, '..', '..', 'google-credentials.json');
       
-      if (fs.existsSync(credentialsPath)) {
+      if (fs.existsSync(localCredentialsPath)) {
         console.log('🔧 Using local credentials file for Firestore');
-        console.log(`📊 Database: ${databaseId}`);
         db = new Firestore({
           projectId,
-          keyFilename: credentialsPath,
-          databaseId,
+          keyFilename: localCredentialsPath,
         });
       } else {
         // Use Application Default Credentials (Cloud Run)
         console.log('🔧 Using Application Default Credentials for Firestore');
-        console.log(`📊 Database: ${databaseId}`);
         db = new Firestore({
           projectId,
-          databaseId,
         });
       }
     }

@@ -19,20 +19,18 @@ class GoogleTranslationService {
     try {
       // Try to load from local file first (for development)
       if (fs.existsSync('./google-credentials.json')) {
-        console.log('🔧 Loading credentials from local file (development mode)');
+        console.log('🔧 Translation: Loading credentials from local file');
         this.credentials = JSON.parse(fs.readFileSync('./google-credentials.json', 'utf8'));
         return this.credentials;
       }
 
       // For Cloud Run, use the default service account
-      console.log('☁️ Using default service account (Cloud Run mode)');
-      // Return null to use default credentials
+      console.log('☁️ Translation: Using default service account');
       this.credentials = null;
       return this.credentials;
     } catch (error) {
-      console.error('❌ Failed to load credentials:', error);
-      // Don't throw error, let it use default credentials
-      console.log('⚠️ Falling back to default service account');
+      console.error('❌ Translation: Failed to load credentials:', error);
+      console.log('⚠️ Translation: Falling back to default service account');
       this.credentials = null;
       return this.credentials;
     }

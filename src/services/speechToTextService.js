@@ -27,12 +27,10 @@ class SpeechToTextService {
 
       // For Cloud Run, use the default service account
       console.log('☁️ Using default service account (Cloud Run mode)');
-      // Return null to use default credentials
       this.credentials = null;
       return this.credentials;
     } catch (error) {
       console.error('❌ Failed to load credentials:', error);
-      // Don't throw error, let it use default credentials
       console.log('⚠️ Falling back to default service account');
       this.credentials = null;
       return this.credentials;
