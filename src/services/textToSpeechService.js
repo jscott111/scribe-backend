@@ -333,7 +333,7 @@ class TextToSpeechService {
         },
         audioConfig: {
           audioEncoding: 'MP3',
-          speakingRate: 0.9,
+          speakingRate: 1,
           pitch: -3.0,  // Lower pitch for deeper, more authoritative tone
           volumeGainDb: 0
         }
