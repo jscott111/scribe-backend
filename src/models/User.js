@@ -1,37 +1,55 @@
 const bcrypt = require('bcrypt');
-const { runQuery, getQuery, allQuery } = require('../database/database');
+const { getDb, Collections, timestampToDate, dateToTimestamp } = require('../database/firestore');
+const { FieldValue } = require('@google-cloud/firestore');
 
 class User {
   constructor(data) {
     this.id = data.id;
     this.name = data.name;
     this.email = data.email;
-    this.passwordHash = data.password_hash;
-    this.isActive = data.is_active;
-    this.userCode = data.user_code;
-    this.totpSecret = data.totp_secret;
-    this.totpEnabled = data.totp_enabled;
-    this.totpBackupCodes = data.totp_backup_codes;
-    this.createdAt = data.created_at;
-    this.updatedAt = data.updated_at;
+    this.passwordHash = data.passwordHash || data.password_hash;
+    this.isActive = data.isActive !== undefined ? data.isActive : data.is_active;
+    this.userCode = data.userCode || data.user_code;
+    this.totpSecret = data.totpSecret || data.totp_secret;
+    this.totpEnabled = data.totpEnabled !== undefined ? data.totpEnabled : data.totp_enabled;
+    this.totpBackupCodes = data.totpBackupCodes || data.totp_backup_codes;
+    this.createdAt = timestampToDate(data.createdAt || data.created_at);
+    this.updatedAt = timestampToDate(data.updatedAt || data.updated_at);
+    this.totalUsageMinutes = data.totalUsageMinutes || 0;
+    this.totalSessions = data.totalSessions || 0;
+    this.lastActiveAt = timestampToDate(data.lastActiveAt);
   }
 
   static async create(name, email, password) {
     try {
+      const db = getDb();
+      const usersRef = db.collection(Collections.USERS);
+      
       const hashedPassword = password.includes(':') ? password : await bcrypt.hash(password, 12);
       
-      const result = await runQuery(
-        `INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id`,
-        [name, email, hashedPassword]
-      );
+      const now = dateToTimestamp(new Date());
+      const userData = {
+        name,
+        email,
+        passwordHash: hashedPassword,
+        isActive: true,
+        userCode: null,
+        totpSecret: null,
+        totpEnabled: false,
+        totpBackupCodes: null,
+        createdAt: now,
+        updatedAt: now,
+        totalUsageMinutes: 0,
+        totalSessions: 0,
+        lastActiveAt: null,
+      };
 
-      // Fetch the created user
-      const userData = await getQuery(
-        `SELECT * FROM users WHERE id = $1`,
-        [result.rows[0].id]
-      );
-
-      return new User(userData);
+      const docRef = await usersRef.add(userData);
+      
+      return new User({
+        id: docRef.id,
+        ...userData,
+      });
     } catch (error) {
       console.error('Error creating user:', error);
       throw error;
@@ -44,16 +62,24 @@ class User {
 
   static async findUserByEmail(email) {
     try {
-      const userData = await getQuery(
-        `SELECT * FROM users WHERE email = $1 AND is_active = true`,
-        [email]
-      );
+      const db = getDb();
+      const usersRef = db.collection(Collections.USERS);
+      
+      const snapshot = await usersRef
+        .where('email', '==', email)
+        .where('isActive', '==', true)
+        .limit(1)
+        .get();
 
-      if (!userData) {
+      if (snapshot.empty) {
         return null;
       }
 
-      return new User(userData);
+      const doc = snapshot.docs[0];
+      return new User({
+        id: doc.id,
+        ...doc.data(),
+      });
     } catch (error) {
       console.error('Error finding user by email:', error);
       throw error;
@@ -62,16 +88,23 @@ class User {
 
   static async findUserById(id) {
     try {
-      const userData = await getQuery(
-        `SELECT * FROM users WHERE id = $1 AND is_active = true`,
-        [id]
-      );
+      const db = getDb();
+      const docRef = db.collection(Collections.USERS).doc(id);
+      const doc = await docRef.get();
 
-      if (!userData) {
+      if (!doc.exists) {
         return null;
       }
 
-      return new User(userData);
+      const data = doc.data();
+      if (!data.isActive) {
+        return null;
+      }
+
+      return new User({
+        id: doc.id,
+        ...data,
+      });
     } catch (error) {
       console.error('Error finding user by ID:', error);
       throw error;
@@ -80,18 +113,22 @@ class User {
 
   static async getAllUsers() {
     try {
-      const usersData = await allQuery(
-        `SELECT id, name, email, is_active, created_at, updated_at FROM users ORDER BY created_at DESC`
-      );
+      const db = getDb();
+      const usersRef = db.collection(Collections.USERS);
+      
+      const snapshot = await usersRef.orderBy('createdAt', 'desc').get();
 
-      return usersData.map(userData => ({
-        id: userData.id,
-        name: userData.name,
-        email: userData.email,
-        isActive: userData.is_active,
-        createdAt: userData.created_at,
-        updatedAt: userData.updated_at
-      }));
+      return snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          name: data.name,
+          email: data.email,
+          isActive: data.isActive,
+          createdAt: timestampToDate(data.createdAt),
+          updatedAt: timestampToDate(data.updatedAt),
+        };
+      });
     } catch (error) {
       console.error('Error getting all users:', error);
       throw error;
@@ -100,38 +137,31 @@ class User {
 
   static async updateUser(id, updateData) {
     try {
+      const db = getDb();
+      const docRef = db.collection(Collections.USERS).doc(id);
+      
       const allowedFields = ['name', 'email'];
-      const updates = [];
-      const values = [];
+      const updates = {};
 
-      let paramIndex = 1;
       for (const field of allowedFields) {
         if (updateData[field] !== undefined) {
-          updates.push(`${field} = $${paramIndex}`);
-          values.push(updateData[field]);
-          paramIndex++;
+          updates[field] = updateData[field];
         }
       }
 
-      if (updates.length === 0) {
+      if (Object.keys(updates).length === 0) {
         throw new Error('No valid fields to update');
       }
 
-      updates.push('updated_at = CURRENT_TIMESTAMP');
-      values.push(id);
+      updates.updatedAt = dateToTimestamp(new Date());
 
-      await runQuery(
-        `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
-        values
-      );
+      await docRef.update(updates);
 
-      // Fetch the updated user
-      const userData = await getQuery(
-        `SELECT * FROM users WHERE id = $1`,
-        [id]
-      );
-
-      return new User(userData);
+      const updatedDoc = await docRef.get();
+      return new User({
+        id: updatedDoc.id,
+        ...updatedDoc.data(),
+      });
     } catch (error) {
       console.error('Error updating user:', error);
       throw error;
@@ -140,18 +170,19 @@ class User {
 
   static async deactivateUser(id) {
     try {
-      await runQuery(
-        `UPDATE users SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-        [id]
-      );
+      const db = getDb();
+      const docRef = db.collection(Collections.USERS).doc(id);
+      
+      await docRef.update({
+        isActive: false,
+        updatedAt: dateToTimestamp(new Date()),
+      });
 
-      // Fetch the updated user
-      const userData = await getQuery(
-        `SELECT * FROM users WHERE id = $1`,
-        [id]
-      );
-
-      return new User(userData);
+      const updatedDoc = await docRef.get();
+      return new User({
+        id: updatedDoc.id,
+        ...updatedDoc.data(),
+      });
     } catch (error) {
       console.error('Error deactivating user:', error);
       throw error;
@@ -160,10 +191,13 @@ class User {
 
   static async updatePassword(id, hashedPassword) {
     try {
-      await runQuery(
-        `UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-        [hashedPassword, id]
-      );
+      const db = getDb();
+      const docRef = db.collection(Collections.USERS).doc(id);
+      
+      await docRef.update({
+        passwordHash: hashedPassword,
+        updatedAt: dateToTimestamp(new Date()),
+      });
 
       return true;
     } catch (error) {
@@ -174,10 +208,15 @@ class User {
 
   static async enableTOTP(id, secret, backupCodes) {
     try {
-      await runQuery(
-        `UPDATE users SET totp_secret = $1, totp_enabled = true, totp_backup_codes = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3`,
-        [secret, backupCodes, id]
-      );
+      const db = getDb();
+      const docRef = db.collection(Collections.USERS).doc(id);
+      
+      await docRef.update({
+        totpSecret: secret,
+        totpEnabled: true,
+        totpBackupCodes: backupCodes,
+        updatedAt: dateToTimestamp(new Date()),
+      });
 
       return true;
     } catch (error) {
@@ -188,10 +227,15 @@ class User {
 
   static async disableTOTP(id) {
     try {
-      await runQuery(
-        `UPDATE users SET totp_secret = NULL, totp_enabled = false, totp_backup_codes = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-        [id]
-      );
+      const db = getDb();
+      const docRef = db.collection(Collections.USERS).doc(id);
+      
+      await docRef.update({
+        totpSecret: null,
+        totpEnabled: false,
+        totpBackupCodes: null,
+        updatedAt: dateToTimestamp(new Date()),
+      });
 
       return true;
     } catch (error) {
@@ -227,6 +271,9 @@ class User {
     let attempts = 0;
     const maxAttempts = 100;
 
+    const db = getDb();
+    const usersRef = db.collection(Collections.USERS);
+
     while (!isUnique && attempts < maxAttempts) {
       // Generate a random code between 3-8 characters
       const length = Math.floor(Math.random() * 6) + 3; // 3-8 characters
@@ -236,12 +283,12 @@ class User {
       }
 
       // Check if code is unique
-      const existingUser = await getQuery(
-        `SELECT id FROM users WHERE user_code = $1`,
-        [code]
-      );
+      const snapshot = await usersRef
+        .where('userCode', '==', code)
+        .limit(1)
+        .get();
 
-      if (!existingUser) {
+      if (snapshot.empty) {
         isUnique = true;
       }
       attempts++;
@@ -256,16 +303,24 @@ class User {
 
   static async findUserByCode(userCode) {
     try {
-      const userData = await getQuery(
-        `SELECT * FROM users WHERE user_code = $1 AND is_active = true`,
-        [userCode]
-      );
+      const db = getDb();
+      const usersRef = db.collection(Collections.USERS);
+      
+      const snapshot = await usersRef
+        .where('userCode', '==', userCode)
+        .where('isActive', '==', true)
+        .limit(1)
+        .get();
 
-      if (!userData) {
+      if (snapshot.empty) {
         return null;
       }
 
-      return new User(userData);
+      const doc = snapshot.docs[0];
+      return new User({
+        id: doc.id,
+        ...doc.data(),
+      });
     } catch (error) {
       console.error('Error finding user by code:', error);
       throw error;
@@ -279,20 +334,27 @@ class User {
         throw new Error('User code must be between 3 and 8 characters');
       }
 
-      // Check if code is already taken
-      const existingUser = await getQuery(
-        `SELECT id FROM users WHERE user_code = $1 AND id != $2`,
-        [userCode, userId]
-      );
+      const db = getDb();
+      const usersRef = db.collection(Collections.USERS);
 
-      if (existingUser) {
-        throw new Error('User code is already taken');
+      // Check if code is already taken by another user
+      const snapshot = await usersRef
+        .where('userCode', '==', userCode)
+        .limit(1)
+        .get();
+
+      if (!snapshot.empty) {
+        const existingDoc = snapshot.docs[0];
+        if (existingDoc.id !== userId) {
+          throw new Error('User code is already taken');
+        }
       }
 
-      await runQuery(
-        `UPDATE users SET user_code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-        [userCode, userId]
-      );
+      const docRef = usersRef.doc(userId);
+      await docRef.update({
+        userCode,
+        updatedAt: dateToTimestamp(new Date()),
+      });
 
       return true;
     } catch (error) {
@@ -303,14 +365,106 @@ class User {
 
   static async clearUserCode(userId) {
     try {
-      await runQuery(
-        `UPDATE users SET user_code = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-        [userId]
-      );
+      const db = getDb();
+      const docRef = db.collection(Collections.USERS).doc(userId);
+      
+      await docRef.update({
+        userCode: null,
+        updatedAt: dateToTimestamp(new Date()),
+      });
 
       return true;
     } catch (error) {
       console.error('Error clearing user code:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Add usage minutes to user's total
+   * @param {string} userId - User ID
+   * @param {number} minutes - Minutes to add
+   */
+  static async addUsageMinutes(userId, minutes) {
+    try {
+      const db = getDb();
+      const docRef = db.collection(Collections.USERS).doc(userId);
+      
+      await docRef.update({
+        totalUsageMinutes: FieldValue.increment(minutes),
+        lastActiveAt: dateToTimestamp(new Date()),
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Error adding usage minutes:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Increment session count for user
+   * @param {string} userId - User ID
+   */
+  static async incrementSessionCount(userId) {
+    try {
+      const db = getDb();
+      const docRef = db.collection(Collections.USERS).doc(userId);
+      
+      await docRef.update({
+        totalSessions: FieldValue.increment(1),
+        lastActiveAt: dateToTimestamp(new Date()),
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Error incrementing session count:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Update last active timestamp
+   * @param {string} userId - User ID
+   */
+  static async updateLastActive(userId) {
+    try {
+      const db = getDb();
+      const docRef = db.collection(Collections.USERS).doc(userId);
+      
+      await docRef.update({
+        lastActiveAt: dateToTimestamp(new Date()),
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Error updating last active:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Get usage stats for a user
+   * @param {string} userId - User ID
+   */
+  static async getUsageStats(userId) {
+    try {
+      const db = getDb();
+      const docRef = db.collection(Collections.USERS).doc(userId);
+      const doc = await docRef.get();
+
+      if (!doc.exists) {
+        return null;
+      }
+
+      const data = doc.data();
+      return {
+        totalUsageMinutes: data.totalUsageMinutes || 0,
+        totalSessions: data.totalSessions || 0,
+        lastActiveAt: timestampToDate(data.lastActiveAt),
+      };
+    } catch (error) {
+      console.error('Error getting usage stats:', error);
       throw error;
     }
   }
@@ -324,7 +478,10 @@ class User {
       userCode: this.userCode,
       totpEnabled: this.totpEnabled,
       createdAt: this.createdAt,
-      updatedAt: this.updatedAt
+      updatedAt: this.updatedAt,
+      totalUsageMinutes: this.totalUsageMinutes,
+      totalSessions: this.totalSessions,
+      lastActiveAt: this.lastActiveAt,
     };
   }
 }

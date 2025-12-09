@@ -1,4 +1,4 @@
-const { runQuery } = require('../database/database');
+const { getDb, Collections, timestampToDate, dateToTimestamp } = require('../database/firestore');
 const crypto = require('crypto');
 
 class PasswordResetToken {
@@ -6,19 +6,22 @@ class PasswordResetToken {
     this.id = id;
     this.userId = userId;
     this.token = token;
-    this.expiresAt = expiresAt;
+    this.expiresAt = timestampToDate(expiresAt);
     this.used = used;
-    this.createdAt = createdAt;
+    this.createdAt = timestampToDate(createdAt);
   }
 
   /**
    * Create a new password reset token
-   * @param {number} userId - The user ID
+   * @param {string} userId - The user ID (Firestore document ID)
    * @param {number} expirationMinutes - Token expiration time in minutes (default: 60)
    * @returns {Promise<PasswordResetToken>}
    */
   static async create(userId, expirationMinutes = 60) {
     try {
+      const db = getDb();
+      const tokensRef = db.collection(Collections.PASSWORD_RESET_TOKENS);
+      
       // Generate a secure random token
       const token = crypto.randomBytes(32).toString('hex');
       
@@ -26,28 +29,39 @@ class PasswordResetToken {
       const expiresAt = new Date();
       expiresAt.setMinutes(expiresAt.getMinutes() + expirationMinutes);
 
-      // Invalidate any existing tokens for this user
-      await runQuery(
-        'UPDATE password_reset_tokens SET used = true WHERE user_id = $1 AND used = false',
-        [userId]
-      );
+      // Invalidate any existing tokens for this user using batch
+      const existingTokensSnapshot = await tokensRef
+        .where('userId', '==', userId)
+        .where('used', '==', false)
+        .get();
 
-      // Insert new token
-      const result = await runQuery(
-        `INSERT INTO password_reset_tokens (user_id, token, expires_at) 
-         VALUES ($1, $2, $3) 
-         RETURNING id, user_id, token, expires_at, used, created_at`,
-        [userId, token, expiresAt]
-      );
+      const batch = db.batch();
+      existingTokensSnapshot.docs.forEach(doc => {
+        batch.update(doc.ref, { used: true });
+      });
 
-      const row = result.rows[0];
+      // Create new token document
+      const now = dateToTimestamp(new Date());
+      const tokenData = {
+        userId,
+        token,
+        expiresAt: dateToTimestamp(expiresAt),
+        used: false,
+        createdAt: now,
+      };
+
+      const newDocRef = tokensRef.doc();
+      batch.set(newDocRef, tokenData);
+      
+      await batch.commit();
+
       return new PasswordResetToken(
-        row.id,
-        row.user_id,
-        row.token,
-        row.expires_at,
-        row.used,
-        row.created_at
+        newDocRef.id,
+        userId,
+        token,
+        expiresAt,
+        false,
+        new Date()
       );
     } catch (error) {
       console.error('Error creating password reset token:', error);
@@ -62,25 +76,35 @@ class PasswordResetToken {
    */
   static async findByToken(token) {
     try {
-      const result = await runQuery(
-        `SELECT id, user_id, token, expires_at, used, created_at 
-         FROM password_reset_tokens 
-         WHERE token = $1 AND used = false AND expires_at > NOW()`,
-        [token]
-      );
+      const db = getDb();
+      const tokensRef = db.collection(Collections.PASSWORD_RESET_TOKENS);
+      
+      const snapshot = await tokensRef
+        .where('token', '==', token)
+        .where('used', '==', false)
+        .limit(1)
+        .get();
 
-      if (result.rows.length === 0) {
+      if (snapshot.empty) {
         return null;
       }
 
-      const row = result.rows[0];
+      const doc = snapshot.docs[0];
+      const data = doc.data();
+      
+      // Check if token is expired
+      const expiresAt = timestampToDate(data.expiresAt);
+      if (expiresAt < new Date()) {
+        return null;
+      }
+
       return new PasswordResetToken(
-        row.id,
-        row.user_id,
-        row.token,
-        row.expires_at,
-        row.used,
-        row.created_at
+        doc.id,
+        data.userId,
+        data.token,
+        data.expiresAt,
+        data.used,
+        data.createdAt
       );
     } catch (error) {
       console.error('Error finding password reset token:', error);
@@ -95,11 +119,20 @@ class PasswordResetToken {
    */
   static async markAsUsed(token) {
     try {
-      const result = await runQuery(
-        'UPDATE password_reset_tokens SET used = true WHERE token = $1',
-        [token]
-      );
-      return result.rowCount > 0;
+      const db = getDb();
+      const tokensRef = db.collection(Collections.PASSWORD_RESET_TOKENS);
+      
+      const snapshot = await tokensRef
+        .where('token', '==', token)
+        .limit(1)
+        .get();
+
+      if (snapshot.empty) {
+        return false;
+      }
+
+      await snapshot.docs[0].ref.update({ used: true });
+      return true;
     } catch (error) {
       console.error('Error marking token as used:', error);
       throw error;
@@ -112,11 +145,26 @@ class PasswordResetToken {
    */
   static async cleanupExpired() {
     try {
-      const result = await runQuery(
-        'DELETE FROM password_reset_tokens WHERE expires_at < NOW()',
-        []
-      );
-      return result.rowCount;
+      const db = getDb();
+      const tokensRef = db.collection(Collections.PASSWORD_RESET_TOKENS);
+      
+      const now = dateToTimestamp(new Date());
+      
+      const snapshot = await tokensRef
+        .where('expiresAt', '<', now)
+        .get();
+
+      if (snapshot.empty) {
+        return 0;
+      }
+
+      const batch = db.batch();
+      snapshot.docs.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+      
+      await batch.commit();
+      return snapshot.size;
     } catch (error) {
       console.error('Error cleaning up expired tokens:', error);
       throw error;
@@ -125,27 +173,30 @@ class PasswordResetToken {
 
   /**
    * Get all tokens for a user (for debugging)
-   * @param {number} userId - The user ID
+   * @param {string} userId - The user ID
    * @returns {Promise<PasswordResetToken[]>}
    */
   static async findByUserId(userId) {
     try {
-      const result = await runQuery(
-        `SELECT id, user_id, token, expires_at, used, created_at 
-         FROM password_reset_tokens 
-         WHERE user_id = $1 
-         ORDER BY created_at DESC`,
-        [userId]
-      );
+      const db = getDb();
+      const tokensRef = db.collection(Collections.PASSWORD_RESET_TOKENS);
+      
+      const snapshot = await tokensRef
+        .where('userId', '==', userId)
+        .orderBy('createdAt', 'desc')
+        .get();
 
-      return result.rows.map(row => new PasswordResetToken(
-        row.id,
-        row.user_id,
-        row.token,
-        row.expires_at,
-        row.used,
-        row.created_at
-      ));
+      return snapshot.docs.map(doc => {
+        const data = doc.data();
+        return new PasswordResetToken(
+          doc.id,
+          data.userId,
+          data.token,
+          data.expiresAt,
+          data.used,
+          data.createdAt
+        );
+      });
     } catch (error) {
       console.error('Error finding tokens by user ID:', error);
       throw error;
@@ -165,5 +216,3 @@ class PasswordResetToken {
 }
 
 module.exports = PasswordResetToken;
-
-

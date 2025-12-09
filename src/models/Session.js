@@ -1,23 +1,37 @@
-const { runQuery, getQuery, allQuery } = require('../database/database');
+const { getDb, Collections, timestampToDate, dateToTimestamp } = require('../database/firestore');
+const { FieldValue } = require('@google-cloud/firestore');
 
 class Session {
   constructor(data) {
     this.id = data.id;
-    this.userId = data.user_id;
-    this.createdAt = data.created_at;
-    this.lastActivity = data.last_activity;
-    this.isActive = data.is_active;
-    this.characterCount = data.character_count;
+    this.userId = data.userId || data.user_id;
+    this.createdAt = timestampToDate(data.createdAt || data.created_at);
+    this.lastActivity = timestampToDate(data.lastActivity || data.last_activity);
+    this.isActive = data.isActive !== undefined ? data.isActive : data.is_active;
+    this.characterCount = data.characterCount !== undefined ? data.characterCount : data.character_count;
   }
 
   static async create(sessionId, userId = null) {
     try {
-      const result = await runQuery(
-        `INSERT INTO sessions (id, user_id) VALUES ($1, $2) RETURNING *`,
-        [sessionId, userId]
-      );
+      const db = getDb();
+      const sessionsRef = db.collection(Collections.SESSIONS);
+      
+      const now = dateToTimestamp(new Date());
+      const sessionData = {
+        userId,
+        createdAt: now,
+        lastActivity: now,
+        isActive: true,
+        characterCount: 0,
+      };
 
-      return new Session(result);
+      // Use the provided sessionId as the document ID
+      await sessionsRef.doc(sessionId).set(sessionData);
+      
+      return new Session({
+        id: sessionId,
+        ...sessionData,
+      });
     } catch (error) {
       console.error('Error creating session:', error);
       throw error;
@@ -26,12 +40,23 @@ class Session {
 
   static async findById(sessionId) {
     try {
-      const session = await getQuery(
-        `SELECT * FROM sessions WHERE id = $1 AND is_active = true`,
-        [sessionId]
-      );
+      const db = getDb();
+      const docRef = db.collection(Collections.SESSIONS).doc(sessionId);
+      const doc = await docRef.get();
 
-      return session ? new Session(session) : null;
+      if (!doc.exists) {
+        return null;
+      }
+
+      const data = doc.data();
+      if (!data.isActive) {
+        return null;
+      }
+
+      return new Session({
+        id: doc.id,
+        ...data,
+      });
     } catch (error) {
       console.error('Error finding session:', error);
       throw error;
@@ -40,12 +65,19 @@ class Session {
 
   static async findByUserId(userId) {
     try {
-      const sessions = await allQuery(
-        `SELECT * FROM sessions WHERE user_id = $1 AND is_active = true ORDER BY created_at DESC`,
-        [userId]
-      );
+      const db = getDb();
+      const sessionsRef = db.collection(Collections.SESSIONS);
+      
+      const snapshot = await sessionsRef
+        .where('userId', '==', userId)
+        .where('isActive', '==', true)
+        .orderBy('createdAt', 'desc')
+        .get();
 
-      return sessions.map(session => new Session(session));
+      return snapshot.docs.map(doc => new Session({
+        id: doc.id,
+        ...doc.data(),
+      }));
     } catch (error) {
       console.error('Error finding sessions by user:', error);
       throw error;
@@ -54,10 +86,13 @@ class Session {
 
   static async updateLastActivity(sessionId) {
     try {
-      await runQuery(
-        `UPDATE sessions SET last_activity = NOW() WHERE id = $1`,
-        [sessionId]
-      );
+      const db = getDb();
+      const docRef = db.collection(Collections.SESSIONS).doc(sessionId);
+      
+      await docRef.update({
+        lastActivity: dateToTimestamp(new Date()),
+      });
+      
       return true;
     } catch (error) {
       console.error('Error updating last activity:', error);
@@ -67,10 +102,13 @@ class Session {
   
   static async updateCharacterCount(characterCount, sessionId) {
     try {
-      await runQuery(
-        `UPDATE sessions SET character_count = character_count + $1 WHERE id = $2`,
-        [characterCount, sessionId]
-      );
+      const db = getDb();
+      const docRef = db.collection(Collections.SESSIONS).doc(sessionId);
+      
+      await docRef.update({
+        characterCount: FieldValue.increment(characterCount),
+      });
+      
       return true;
     } catch (error) {
       console.error('Error updating character count:', error);
@@ -80,10 +118,13 @@ class Session {
 
   static async deactivate(sessionId) {
     try {
-      await runQuery(
-        `UPDATE sessions SET is_active = false WHERE id = $1`,
-        [sessionId]
-      );
+      const db = getDb();
+      const docRef = db.collection(Collections.SESSIONS).doc(sessionId);
+      
+      await docRef.update({
+        isActive: false,
+      });
+      
       return true;
     } catch (error) {
       console.error('Error deactivating session:', error);
@@ -93,10 +134,20 @@ class Session {
 
   static async deactivateAllForUser(userId) {
     try {
-      await runQuery(
-        `UPDATE sessions SET is_active = false WHERE user_id = $1 AND is_active = true`,
-        [userId]
-      );
+      const db = getDb();
+      const sessionsRef = db.collection(Collections.SESSIONS);
+      
+      const snapshot = await sessionsRef
+        .where('userId', '==', userId)
+        .where('isActive', '==', true)
+        .get();
+
+      const batch = db.batch();
+      snapshot.docs.forEach(doc => {
+        batch.update(doc.ref, { isActive: false });
+      });
+      
+      await batch.commit();
       return true;
     } catch (error) {
       console.error('Error deactivating sessions for user:', error);
@@ -106,10 +157,22 @@ class Session {
 
   static async deactivateAllForUserExcept(userId, exceptSessionId) {
     try {
-      await runQuery(
-        `UPDATE sessions SET is_active = false WHERE user_id = $1 AND is_active = true AND id != $2`,
-        [userId, exceptSessionId]
-      );
+      const db = getDb();
+      const sessionsRef = db.collection(Collections.SESSIONS);
+      
+      const snapshot = await sessionsRef
+        .where('userId', '==', userId)
+        .where('isActive', '==', true)
+        .get();
+
+      const batch = db.batch();
+      snapshot.docs.forEach(doc => {
+        if (doc.id !== exceptSessionId) {
+          batch.update(doc.ref, { isActive: false });
+        }
+      });
+      
+      await batch.commit();
       return true;
     } catch (error) {
       console.error('Error deactivating sessions for user except current:', error);
@@ -119,11 +182,15 @@ class Session {
 
   static async getActiveSessionCount() {
     try {
-      const result = await getQuery(
-        `SELECT COUNT(*) as count FROM sessions WHERE is_active = true`,
-        []
-      );
-      return parseInt(result.count);
+      const db = getDb();
+      const sessionsRef = db.collection(Collections.SESSIONS);
+      
+      const snapshot = await sessionsRef
+        .where('isActive', '==', true)
+        .count()
+        .get();
+      
+      return snapshot.data().count;
     } catch (error) {
       console.error('Error getting active session count:', error);
       return 0;
@@ -132,11 +199,19 @@ class Session {
 
   static async getActiveSessionsForUser(userId) {
     try {
-      const sessions = await getQuery(
-        `SELECT * FROM sessions WHERE user_id = $1 AND is_active = true ORDER BY created_at DESC`,
-        [userId]
-      );
-      return sessions.map(session => new Session(session));
+      const db = getDb();
+      const sessionsRef = db.collection(Collections.SESSIONS);
+      
+      const snapshot = await sessionsRef
+        .where('userId', '==', userId)
+        .where('isActive', '==', true)
+        .orderBy('createdAt', 'desc')
+        .get();
+
+      return snapshot.docs.map(doc => new Session({
+        id: doc.id,
+        ...doc.data(),
+      }));
     } catch (error) {
       console.error('Error getting active sessions for user:', error);
       return [];
@@ -145,14 +220,30 @@ class Session {
 
   static async cleanupExpired() {
     try {
-      const result = await runQuery(
-        `UPDATE sessions SET is_active = false 
-         WHERE is_active = true 
-         AND last_activity < NOW() - INTERVAL '24 hours'`,
-        []
-      );
+      const db = getDb();
+      const sessionsRef = db.collection(Collections.SESSIONS);
       
-      return result.rowCount || 0;
+      // Calculate 24 hours ago
+      const twentyFourHoursAgo = new Date();
+      twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+      const cutoffTimestamp = dateToTimestamp(twentyFourHoursAgo);
+      
+      const snapshot = await sessionsRef
+        .where('isActive', '==', true)
+        .where('lastActivity', '<', cutoffTimestamp)
+        .get();
+
+      if (snapshot.empty) {
+        return 0;
+      }
+
+      const batch = db.batch();
+      snapshot.docs.forEach(doc => {
+        batch.update(doc.ref, { isActive: false });
+      });
+      
+      await batch.commit();
+      return snapshot.size;
     } catch (error) {
       console.error('Error cleaning up expired sessions:', error);
       return 0;

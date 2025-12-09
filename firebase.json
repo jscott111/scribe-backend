@@ -1,0 +1,20 @@
+{
+  "emulators": {
+    "firestore": {
+      "port": 8181,
+      "host": "localhost"
+    },
+    "ui": {
+      "enabled": true,
+      "port": 4000
+    },
+    "singleProjectMode": true
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "projects": {
+    "default": "demo-scribe"
+  }
+}
+

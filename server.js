@@ -7,7 +7,7 @@ require('dotenv').config()
 const config = require('./src/config')
 const { authenticateSocket } = require('./src/middleware/auth')
 const authRoutes = require('./src/routes/auth')
-const { initDatabase } = require('./src/database/database')
+const { initFirestore } = require('./src/database/firestore')
 const User = require('./src/models/User')
 const speechToTextService = require('./src/services/speechToTextService')
 const googleTranslationService = require('./src/services/googleTranslationService')
@@ -1042,12 +1042,12 @@ const startServer = async () => {
       server.on('error', reject)
     })
     
-    console.log('🔧 Starting database initialization...')
+    console.log('🔧 Starting Firestore initialization...')
     try {
-      await initDatabase()
-      console.log('✅ Database initialized')
+      await initFirestore()
+      console.log('✅ Firestore initialized')
     } catch (dbError) {
-      console.error('❌ Database initialization failed:', dbError.message)
+      console.error('❌ Firestore initialization failed:', dbError.message)
       console.log('⚠️ Server will continue but database features may not work')
     }
     
