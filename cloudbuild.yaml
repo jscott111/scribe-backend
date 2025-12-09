@@ -5,20 +5,6 @@ steps:
     args: ['ci']
     dir: '.'
 
-  # Run migration from Cloud SQL to Firestore (idempotent - safe to run every deploy)
-  - id: 'migrate-to-firestore'
-    name: 'node:20'
-    entrypoint: 'npm'
-    args: ['run', 'migrate:firestore']
-    dir: '.'
-    env:
-      - 'DB_HOST=${_DB_HOST}'
-      - 'DB_NAME=${_DB_NAME}'
-      - 'DB_USER=${_DB_USER}'
-      - 'DB_SSL=true'
-      - 'GOOGLE_CLOUD_PROJECT_ID=$PROJECT_ID'
-    secretEnv: ['DB_PASSWORD']
-
   - id: 'build-image'
     name: 'gcr.io/cloud-builders/docker'
     args: ['build', '-t', 'gcr.io/$PROJECT_ID/scribe-backend:$TAG_NAME', '.']
@@ -58,19 +44,10 @@ steps:
 images:
   - 'gcr.io/$PROJECT_ID/scribe-backend:$TAG_NAME'
 
-# Substitution variables - set these in Cloud Build trigger
+# Substitution variables
 substitutions:
   _VERSION: ''
   TAG_NAME: '$COMMIT_SHA'
-  _DB_HOST: '34.47.41.143'
-  _DB_NAME: 'scribe-prod'
-  _DB_USER: 'scribe-user'
-
-# Secret Manager integration for DB password
-availableSecrets:
-  secretManager:
-    - versionName: projects/$PROJECT_ID/secrets/scribe-db-password/versions/latest
-      env: 'DB_PASSWORD'
 
 # Build options
 options:
