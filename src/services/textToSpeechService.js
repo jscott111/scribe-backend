@@ -15,8 +15,18 @@ class TextToSpeechService {
     }
 
     try {
+      const isProduction = process.env.NODE_ENV === 'prod' || process.env.NODE_ENV === 'production';
+      
+      if (isProduction) {
+        // Production: always use service account (ADC)
+        console.log('☁️ TTS: Using default service account (production)');
+        this.credentials = null;
+        return this.credentials;
+      }
+      
+      // Development: try local credentials file
       if (fs.existsSync('./google-credentials.json')) {
-        console.log('🔧 TTS: Loading credentials from local file');
+        console.log('🔧 TTS: Loading credentials from local file (development)');
         this.credentials = JSON.parse(fs.readFileSync('./google-credentials.json', 'utf8'));
         return this.credentials;
       }

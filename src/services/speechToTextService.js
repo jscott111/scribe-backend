@@ -18,15 +18,24 @@ class SpeechToTextService {
     }
 
     try {
-      // Try to load from local file first (for development)
+      const isProduction = process.env.NODE_ENV === 'prod' || process.env.NODE_ENV === 'production';
+      
+      if (isProduction) {
+        // Production: always use service account (ADC)
+        console.log('☁️ Using default service account (production)');
+        this.credentials = null;
+        return this.credentials;
+      }
+      
+      // Development: try local credentials file
       if (fs.existsSync('./google-credentials.json')) {
-        console.log('🔧 Loading credentials from local file (development mode)');
+        console.log('🔧 Loading credentials from local file (development)');
         this.credentials = JSON.parse(fs.readFileSync('./google-credentials.json', 'utf8'));
         return this.credentials;
       }
 
-      // For Cloud Run, use the default service account
-      console.log('☁️ Using default service account (Cloud Run mode)');
+      // Fallback to ADC
+      console.log('☁️ Using default service account');
       this.credentials = null;
       return this.credentials;
     } catch (error) {

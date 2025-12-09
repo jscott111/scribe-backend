@@ -114,7 +114,7 @@ async function processTranslations(translationConnections, transcript, sourceLan
   }
 }
 
-io.on('connection', (socket) => {
+io.on('connection', async (socket) => {
   console.log(`🔌 Client connected: ${socket.user?.email || 'Listener'} (${socket.userCode || 'No User Code'})`)
   
   activeConnections.set(socket.id, {
@@ -130,8 +130,19 @@ io.on('connection', (socket) => {
     connectionQuality: 'good', // good, poor, critical
     messageCount: 0,
     errorCount: 0,
-    lastActivity: Date.now()
+    lastActivity: Date.now(),
+    streamStartTime: null,  // Track when streaming session started
+    sessionCounted: false   // Prevent double-counting sessions
   })
+  
+  // Update lastActive for authenticated users
+  if (socket.user?.id) {
+    try {
+      await User.updateLastActive(socket.user.id);
+    } catch (err) {
+      console.warn('⚠️ Failed to update lastActive:', err.message);
+    }
+  }
 
   // Set up heartbeat mechanism
   const connection = activeConnections.get(socket.id)
@@ -261,6 +272,15 @@ io.on('connection', (socket) => {
         connection.sourceLanguage = sourceLanguage
         connection.messageCount++
         connection.lastActivity = Date.now()
+        
+        // Track streaming session start
+        if (!connection.streamStartTime) {
+          connection.streamStartTime = Date.now();
+          if (socket.user?.id && !connection.sessionCounted) {
+            connection.sessionCounted = true;
+            User.incrementSessionCount(socket.user.id).catch(() => {});
+          }
+        }
       }
 
       const currentConnection = activeConnections.get(socket.id)
@@ -384,6 +404,15 @@ io.on('connection', (socket) => {
       if (connection) {
         connection.isStreaming = true
         connection.sourceLanguage = sourceLanguage
+        
+        // Track streaming session start
+        if (!connection.streamStartTime) {
+          connection.streamStartTime = Date.now();
+          if (socket.user?.id && !connection.sessionCounted) {
+            connection.sessionCounted = true;
+            User.incrementSessionCount(socket.user.id).catch(() => {});
+          }
+        }
       }
 
       const currentConnection = activeConnections.get(socket.id)
@@ -828,10 +857,19 @@ io.on('connection', (socket) => {
   })
 
 
-  socket.on('stopStreaming', () => {
+  socket.on('stopStreaming', async () => {
     const connection = activeConnections.get(socket.id)
     if (connection) {
       connection.isStreaming = false
+      
+      // Record usage minutes
+      if (connection.streamStartTime && socket.user?.id) {
+        const usageMinutes = (Date.now() - connection.streamStartTime) / 60000;
+        if (usageMinutes >= 0.1) {
+          User.addUsageMinutes(socket.user.id, usageMinutes).catch(() => {});
+        }
+        connection.streamStartTime = null;
+      }
     }
     
     // End Google Cloud streaming session
@@ -880,12 +918,20 @@ io.on('connection', (socket) => {
     socket.emit('connectionCount', connectionData)
   })
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     const connection = activeConnections.get(socket.id)
     
     // Clean up ping timeout
     if (connection && connection.pingTimeout) {
       clearTimeout(connection.pingTimeout)
+    }
+    
+    // Record usage minutes if user was streaming when disconnected
+    if (connection?.streamStartTime && socket.user?.id) {
+      const usageMinutes = (Date.now() - connection.streamStartTime) / 60000;
+      if (usageMinutes >= 0.1) {
+        User.addUsageMinutes(socket.user.id, usageMinutes).catch(() => {});
+      }
     }
     
     // Clean up streaming session

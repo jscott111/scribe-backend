@@ -13,9 +13,6 @@ RUN npm ci --only=production
 # Copy application code
 COPY . .
 
-# Create data directory for SQLite database
-RUN mkdir -p data
-
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs
 RUN adduser -S nodejs -u 1001

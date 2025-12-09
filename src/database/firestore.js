@@ -19,26 +19,40 @@ const initFirestore = async () => {
     const useEmulator = process.env.FIRESTORE_EMULATOR_HOST;
     
     if (useEmulator) {
-      // Use Firestore Emulator for local development (uses default database)
+      // Use Firestore Emulator for local development
+      // Note: Emulator uses (default) database, not named 'default' database
       console.log(`🔧 Using Firestore Emulator at ${useEmulator}`);
       db = new Firestore({
         projectId: 'demo-scribe',  // Use demo project for emulator
       });
     } else {
-      // Production: use default database (no databaseId needed)
+      const isProduction = process.env.NODE_ENV === 'prod' || process.env.NODE_ENV === 'production';
       const localCredentialsPath = path.join(__dirname, '..', '..', 'google-credentials.json');
       
-      if (fs.existsSync(localCredentialsPath)) {
-        console.log('🔧 Using local credentials file for Firestore');
+      // Use 'default' named database (not the special "(default)" database)
+      const databaseId = 'default';
+      
+      if (isProduction) {
+        // Production: always use Application Default Credentials (service account)
+        console.log(`🔧 Using Application Default Credentials for Firestore (production, database: ${databaseId})`);
+        db = new Firestore({
+          projectId,
+          databaseId,
+        });
+      } else if (fs.existsSync(localCredentialsPath)) {
+        // Development: use local credentials file if available
+        console.log(`🔧 Using local credentials file for Firestore (development, database: ${databaseId})`);
         db = new Firestore({
           projectId,
           keyFilename: localCredentialsPath,
+          databaseId,
         });
       } else {
-        // Use Application Default Credentials (Cloud Run)
-        console.log('🔧 Using Application Default Credentials for Firestore');
+        // Fallback to ADC
+        console.log(`🔧 Using Application Default Credentials for Firestore (database: ${databaseId})`);
         db = new Firestore({
           projectId,
+          databaseId,
         });
       }
     }
