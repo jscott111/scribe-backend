@@ -380,8 +380,6 @@ io.on('connection', (socket) => {
         speechEndTimeout = 1.0
       } = data
 
-      console.log(`🎤 Received speechEndTimeout: ${speechEndTimeout}s from frontend`)
-
       const connection = activeConnections.get(socket.id)
       if (connection) {
         connection.isStreaming = true
