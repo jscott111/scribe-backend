@@ -17,6 +17,9 @@ module.exports = {
   JWT_ACCESS_EXPIRES_IN: '30d',
   JWT_REFRESH_EXPIRES_IN: '60d',
   
+  // Google Cloud
+  GOOGLE_CLOUD_PROJECT_ID: process.env.GOOGLE_CLOUD_PROJECT_ID || 'scribe-471123',
+  
   // CORS
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'https://speaker-staging.yourdomain.com,https://listener-staging.yourdomain.com',
   

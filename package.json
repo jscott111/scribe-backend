@@ -4,12 +4,11 @@
   "description": "Backend server for Scribe - Real-time audio translation app",
   "main": "src/server.js",
   "scripts": {
-    "start": "NODE_ENV=prod DB_HOST=https://api.scribe-ai.ca DB_USER=scribe-user DB_PASSWORD='3557321Joh--' DB_NAME=scribe-prod DB_SSL=true node server.js",
-    "dev": "NODE_ENV=dev DB_HOST=localhost DB_USER=johnascott DB_PASSWORD= DB_NAME=scribe-dev DB_SSL=false nodemon server.js",
-    "staging": "NODE_ENV=staging DB_HOST=34.47.41.143 DB_USER=scribe-user DB_PASSWORD='3557321Joh--' DB_NAME=scribe-staging DB_SSL=true node server.js",
-    "migrate": "node src/database/migrations/migrate.js",
-    "migrate:status": "node src/database/migrations/migrate.js --status",
-    "create-migration": "node src/database/migrations/create-migration.js",
+    "start": "NODE_ENV=prod node server.js",
+    "dev": "concurrently --kill-others \"npm run emulator\" \"sleep 5 && npm run dev:server\"",
+    "dev:server": "FIRESTORE_EMULATOR_HOST=localhost:8181 NODE_ENV=dev nodemon server.js",
+    "emulator": "firebase emulators:start --only firestore --import=./emulator-data --export-on-exit=./emulator-data",
+    "migrate:firestore": "node scripts/migrate-to-firestore.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "kill": "pkill -f 'node'"
   },
@@ -23,6 +22,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google-cloud/firestore": "^8.0.0",
     "@google-cloud/secret-manager": "^6.1.0",
     "@google-cloud/speech": "^6.0.0",
     "@google-cloud/text-to-speech": "^6.4.0",
@@ -42,10 +42,10 @@
     "pg": "^8.11.3",
     "qrcode": "^1.5.4",
     "socket.io": "^4.7.2",
-    "speakeasy": "^2.0.0",
-    "sqlite3": "^5.1.6"
+    "speakeasy": "^2.0.0"
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "nodemon": "^3.0.1"
   }
 }
