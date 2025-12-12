@@ -7,7 +7,7 @@
     "start": "NODE_ENV=prod node server.js",
     "dev": "concurrently --kill-others \"npm run emulator\" \"sleep 5 && npm run dev:server\"",
     "dev:server": "FIRESTORE_EMULATOR_HOST=localhost:8181 NODE_ENV=dev nodemon server.js",
-    "emulator": "firebase emulators:start --only firestore --project demo-scribe --import=./emulator-data --export-on-exit=./emulator-data",
+    "emulator": "npx firebase emulators:start --only firestore --project demo-scribe --import=./emulator-data --export-on-exit=./emulator-data",
     "test": "echo \"Error: no test specified\" && exit 1",
     "kill": "pkill -f 'node'"
   },
@@ -44,6 +44,7 @@
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
+    "firebase-tools": "^15.0.0",
     "nodemon": "^3.0.1"
   }
 }
