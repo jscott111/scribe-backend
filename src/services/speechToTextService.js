@@ -183,15 +183,19 @@ class SpeechToTextService {
 
     // Track stream start time for 5-minute limit
     const streamStartTime = Date.now();
-    const STREAM_DURATION_LIMIT = 4.5 * 60 * 1000; // 4.5 minutes in milliseconds
+    // TESTING: 1 minute for quick verification (change to 4.5 * 60 * 1000 for production)
+    const STREAM_DURATION_LIMIT = 1 * 60 * 1000; // 1 minute for testing
 
-    // Set up automatic restart timer
+    // Set up automatic restart timer - attach to stream so it can be cleared
     const restartTimer = setTimeout(() => {
       console.log('🔄 Google Cloud stream approaching 5-minute limit, restarting...');
       if (callbacks && callbacks.onRestart) {
         callbacks.onRestart();
       }
     }, STREAM_DURATION_LIMIT);
+    
+    // Attach timer to stream so server.js can clear it during overlap
+    recognizeStream._restartTimer = restartTimer;
 
     // Handle streaming responses
     recognizeStream.on('data', (response) => {
@@ -229,13 +233,17 @@ class SpeechToTextService {
       // Check if this is a recoverable error that should trigger restart
       const isRecoverable = error.code === 14 || // UNAVAILABLE
                            error.code === 13 || // INTERNAL
+                           error.code === 11 || // OUT_OF_RANGE (Audio Timeout Error)
                            error.code === 4 ||  // DEADLINE_EXCEEDED
+                           error.code === 2 ||  // UNKNOWN (often 408 Request Timeout)
                            (error.message && (
                              error.message.includes('UNAVAILABLE') ||
                              error.message.includes('RST_STREAM') ||
                              error.message.includes('GOAWAY') ||
                              error.message.includes('deadline') ||
-                             error.message.includes('timeout')
+                             error.message.includes('timeout') ||
+                             error.message.includes('Audio Timeout') ||
+                             error.message.includes('Request Timeout')
                            ));
       
       if (isRecoverable && callbacks && callbacks.onRestart) {
