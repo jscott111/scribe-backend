@@ -225,7 +225,26 @@ class SpeechToTextService {
       if (recognizeStream) {
         recognizeStream.destroyed = true;
       }
-      if (callbacks && callbacks.onError) {
+      
+      // Check if this is a recoverable error that should trigger restart
+      const isRecoverable = error.code === 14 || // UNAVAILABLE
+                           error.code === 13 || // INTERNAL
+                           error.code === 4 ||  // DEADLINE_EXCEEDED
+                           (error.message && (
+                             error.message.includes('UNAVAILABLE') ||
+                             error.message.includes('RST_STREAM') ||
+                             error.message.includes('GOAWAY') ||
+                             error.message.includes('deadline') ||
+                             error.message.includes('timeout')
+                           ));
+      
+      if (isRecoverable && callbacks && callbacks.onRestart) {
+        console.log('🔄 Recoverable error detected, triggering automatic stream restart...');
+        // Delay restart slightly to avoid rapid reconnection
+        setTimeout(() => {
+          callbacks.onRestart();
+        }, 500);
+      } else if (callbacks && callbacks.onError) {
         callbacks.onError(error);
       }
     });
