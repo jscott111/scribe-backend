@@ -1054,6 +1054,18 @@ io.on('connection', async (socket) => {
     }
   })
 
+  // Handle listener going back to language selection (clears their target language)
+  socket.on('clearTargetLanguage', () => {
+    console.log(`🔄 clearTargetLanguage received for socket ${socket.id}`)
+    const connection = activeConnections.get(socket.id)
+    if (connection) {
+      const hadLanguage = connection.targetLanguage
+      connection.targetLanguage = null
+      console.log(`✅ Target language cleared for listener (was: ${hadLanguage}, userCode: ${connection.userCode})`)
+      emitConnectionCount(connection.userCode)
+    }
+  })
+
   socket.on('getConnectionCount', () => {
     const currentConnection = activeConnections.get(socket.id)
     const userCode = currentConnection?.userCode

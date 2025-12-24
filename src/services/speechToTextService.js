@@ -181,10 +181,8 @@ class SpeechToTextService {
       throw new Error(`Failed to create recognition stream: ${error.message}`);
     }
 
-    // Track stream start time for 5-minute limit
-    const streamStartTime = Date.now();
-    // TESTING: 1 minute for quick verification (change to 4.5 * 60 * 1000 for production)
-    const STREAM_DURATION_LIMIT = 1 * 60 * 1000; // 1 minute for testing
+    // TESTING: 1 minute for quick verification (change to 3 * 60 * 1000 for production)
+    const STREAM_DURATION_LIMIT = 3 * 60 * 1000;
 
     // Set up automatic restart timer - attach to stream so it can be cleared
     const restartTimer = setTimeout(() => {
