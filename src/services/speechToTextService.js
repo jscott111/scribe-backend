@@ -190,9 +190,9 @@ class SpeechToTextService {
     // Track stream start time for 5-minute limit
     const streamStartTime = Date.now();
     // Start restart 5 seconds early to allow for overlap transition
-    const STREAM_DURATION_LIMIT = (0.5 * 60 * 1000) - this.PRE_RESTART_BUFFER; // 4:25 to allow 5s overlap buffer
+    const STREAM_DURATION_LIMIT = (4.5 * 60 * 1000) - this.PRE_RESTART_BUFFER; // 4:25 to allow 5s overlap buffer
 
-    // Set up automatic restart timer
+    // Set up automatic restart timer - attach to stream so it can be cleared
     const restartTimer = setTimeout(() => {
       console.log('🔄 Google Cloud stream approaching 5-minute limit, initiating overlap transition...');
       if (callbacks && callbacks.onPreRestart) {
@@ -202,6 +202,9 @@ class SpeechToTextService {
         callbacks.onRestart();
       }
     }, STREAM_DURATION_LIMIT);
+    
+    // Attach timer to stream so server.js can clear it during overlap
+    recognizeStream._restartTimer = restartTimer;
 
     // Handle streaming responses
     recognizeStream.on('data', (response) => {
@@ -235,7 +238,30 @@ class SpeechToTextService {
       if (recognizeStream) {
         recognizeStream.destroyed = true;
       }
-      if (callbacks && callbacks.onError) {
+      
+      // Check if this is a recoverable error that should trigger restart
+      const isRecoverable = error.code === 14 || // UNAVAILABLE
+                           error.code === 13 || // INTERNAL
+                           error.code === 11 || // OUT_OF_RANGE (Audio Timeout Error)
+                           error.code === 4 ||  // DEADLINE_EXCEEDED
+                           error.code === 2 ||  // UNKNOWN (often 408 Request Timeout)
+                           (error.message && (
+                             error.message.includes('UNAVAILABLE') ||
+                             error.message.includes('RST_STREAM') ||
+                             error.message.includes('GOAWAY') ||
+                             error.message.includes('deadline') ||
+                             error.message.includes('timeout') ||
+                             error.message.includes('Audio Timeout') ||
+                             error.message.includes('Request Timeout')
+                           ));
+      
+      if (isRecoverable && callbacks && callbacks.onRestart) {
+        console.log('🔄 Recoverable error detected, triggering automatic stream restart...');
+        // Delay restart slightly to avoid rapid reconnection
+        setTimeout(() => {
+          callbacks.onRestart();
+        }, 500);
+      } else if (callbacks && callbacks.onError) {
         callbacks.onError(error);
       }
     });

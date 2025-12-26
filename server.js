@@ -45,6 +45,7 @@ app.use('/auth', authRoutes)
 
 const activeConnections = new Map()
 let audioChunkCounter = 0
+let lastAudioLogTime = Date.now()
 const streamingSessions = new Map() // Track streaming sessions per socket
 const processedTranscripts = new Map() // Track processed transcripts to prevent duplicates
 const restartingStreams = new Map() // Track sockets that are currently restarting their stream
@@ -370,11 +371,11 @@ io.on('connection', async (socket) => {
   // Set up heartbeat mechanism
   const connection = activeConnections.get(socket.id)
   if (connection) {
-    // Set initial ping timeout (30 seconds)
+    // Set initial ping timeout (60 seconds - more lenient for initial connection)
     connection.pingTimeout = setTimeout(() => {
       console.log(`💔 Heartbeat timeout for socket ${socket.id}, disconnecting...`)
       socket.disconnect(true)
-    }, 30000)
+    }, 60000)
   }
 
   if (socket.needsTokenRefresh) {
@@ -390,27 +391,32 @@ io.on('connection', async (socket) => {
   socket.on('ping', () => {
     const connection = activeConnections.get(socket.id)
     if (connection) {
-      connection.lastPing = Date.now()
-      connection.lastActivity = Date.now()
+      // Calculate time since last ping BEFORE updating it
+      const timeSinceLastPing = connection.lastPing ? Date.now() - connection.lastPing : 0
       
-      // Update connection quality based on ping frequency
-      const timeSinceLastPing = Date.now() - connection.lastPing
-      if (timeSinceLastPing > 20000) {
-        connection.connectionQuality = 'poor'
-      } else if (timeSinceLastPing > 30000) {
+      // Update connection quality based on ping interval
+      // Expected ping interval is ~15 seconds, so longer intervals indicate poor connection
+      if (timeSinceLastPing > 30000) {
         connection.connectionQuality = 'critical'
+      } else if (timeSinceLastPing > 20000) {
+        connection.connectionQuality = 'poor'
       } else {
         connection.connectionQuality = 'good'
       }
+      
+      // Update last ping time after calculating quality
+      connection.lastPing = Date.now()
+      connection.lastActivity = Date.now()
       
       // Clear existing timeout and set new one
       if (connection.pingTimeout) {
         clearTimeout(connection.pingTimeout)
       }
       
-      // Adaptive timeout based on connection quality
-      const timeoutDuration = connection.connectionQuality === 'critical' ? 15000 : 
-                            connection.connectionQuality === 'poor' ? 25000 : 30000
+      // Adaptive timeout based on connection quality - more lenient timeouts
+      // Even with "critical" quality, give 45 seconds to recover
+      const timeoutDuration = connection.connectionQuality === 'critical' ? 45000 : 
+                            connection.connectionQuality === 'poor' ? 60000 : 90000
       
       connection.pingTimeout = setTimeout(() => {
         console.log(`💔 Heartbeat timeout for socket ${socket.id} (quality: ${connection.connectionQuality}), disconnecting...`)
@@ -658,6 +664,13 @@ io.on('connection', async (socket) => {
           const audioBuffer = Buffer.from(audioData, 'base64')
 
           audioChunkCounter++
+          
+          // Log audio reception periodically (every 5 seconds) to track if audio is flowing
+          const now = Date.now()
+          if (now - lastAudioLogTime > 5000) {
+            console.log(`🎵 Audio flowing: ${audioChunkCounter} chunks received, buffer size: ${audioBuffer.length} bytes`)
+            lastAudioLogTime = now
+          }
           
           // Check if this is LINEAR16 format from frontend
           const audioFormat = data.audioFormat || 'WEBM';
@@ -931,9 +944,25 @@ io.on('connection', async (socket) => {
   })
 
   socket.on('setTargetLanguage', (data) => {
+    console.log(`🎯 setTargetLanguage received: ${data.targetLanguage} for socket ${socket.id}`)
     const connection = activeConnections.get(socket.id)
     if (connection) {
       connection.targetLanguage = data.targetLanguage
+      console.log(`✅ Target language set to ${data.targetLanguage} for listener (userCode: ${connection.userCode})`)
+      emitConnectionCount(connection.userCode)
+    } else {
+      console.log(`⚠️ No connection found for socket ${socket.id}`)
+    }
+  })
+
+  // Handle listener going back to language selection (clears their target language)
+  socket.on('clearTargetLanguage', () => {
+    console.log(`🔄 clearTargetLanguage received for socket ${socket.id}`)
+    const connection = activeConnections.get(socket.id)
+    if (connection) {
+      const hadLanguage = connection.targetLanguage
+      connection.targetLanguage = null
+      console.log(`✅ Target language cleared for listener (was: ${hadLanguage}, userCode: ${connection.userCode})`)
       emitConnectionCount(connection.userCode)
     }
   })
@@ -1212,6 +1241,69 @@ app.get('/health', (req, res) => {
   }
 })
 
+// Translation service health check endpoint
+app.get('/health/translation', async (req, res) => {
+  try {
+    const health = await googleTranslationService.healthCheck();
+    const stats = googleTranslationService.getStats();
+    
+    res.status(health.healthy ? 200 : 503).json({
+      service: 'translation',
+      healthy: health.healthy,
+      timestamp: new Date().toISOString(),
+      stats: stats,
+      health: health
+    });
+  } catch (error) {
+    console.error('Translation health check error:', error);
+    res.status(503).json({
+      service: 'translation',
+      healthy: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+})
+
+// Translation service statistics endpoint
+app.get('/api/translation/stats', (req, res) => {
+  try {
+    const stats = googleTranslationService.getStats();
+    res.json({
+      ...stats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Translation stats error:', error);
+    res.status(500).json({
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+})
+
+// Force translation client recreation (for testing/debugging)
+app.post('/api/translation/recreate-client', async (req, res) => {
+  try {
+    console.log('🔄 Manual client recreation requested');
+    await googleTranslationService.getTranslationClient(true);
+    const health = await googleTranslationService.healthCheck();
+    res.json({
+      success: true,
+      message: 'Translation client recreated',
+      health: health,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Failed to recreate translation client:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+})
+
 app.post('/api/tts', async (req, res) => {
   try {
     const { text, languageCode } = req.body
@@ -1315,9 +1407,72 @@ const startServer = async () => {
         }
       }
       
+      // Health check: detect and clean up stale connections
+      // Reduced to 45 seconds - connections should ping every 10-25 seconds
+      const staleConnectionTimeout = 45000 // 45 seconds (allows for 1-2 missed pings)
+      const staleSockets = []
+      
+      for (const [socketId, connection] of activeConnections.entries()) {
+        const socket = io.sockets.sockets.get(socketId)
+        
+        // Check if socket is still connected
+        if (!socket || !socket.connected) {
+          console.log(`🧹 Cleaning up disconnected socket: ${socketId}`)
+          staleSockets.push(socketId)
+          continue
+        }
+        
+        // Check if connection is stale (no ping received in too long)
+        const timeSinceLastPing = now - connection.lastPing
+        if (timeSinceLastPing > staleConnectionTimeout) {
+          console.log(`🧹 Detected stale connection: ${socketId} (last ping: ${Math.round(timeSinceLastPing / 1000)}s ago)`)
+          staleSockets.push(socketId)
+        }
+      }
+      
+      // Clean up stale sockets
+      for (const socketId of staleSockets) {
+        const socket = io.sockets.sockets.get(socketId)
+        const connection = activeConnections.get(socketId)
+        
+        if (connection && connection.pingTimeout) {
+          clearTimeout(connection.pingTimeout)
+        }
+        
+        // Clean up streaming session if exists
+        const recognizeStream = streamingSessions.get(socketId)
+        if (recognizeStream) {
+          speechToTextService.endStreamingRecognition(recognizeStream)
+          streamingSessions.delete(socketId)
+        }
+        
+        // Clean up processed transcripts for this socket
+        const socketPrefix = `${socketId}-`
+        for (const [key, _] of processedTranscripts.entries()) {
+          if (key.startsWith(socketPrefix)) {
+            processedTranscripts.delete(key)
+          }
+        }
+        
+        // Emit connection count update before cleanup
+        if (connection?.userCode) {
+          emitConnectionCount(connection.userCode)
+        }
+        
+        // Remove from active connections
+        activeConnections.delete(socketId)
+        
+        // Disconnect the socket if it still exists
+        if (socket && socket.connected) {
+          socket.disconnect(true)
+        }
+        
+        console.log(`✅ Cleaned up stale connection: ${socketId}`)
+      }
+      
       // Log connection statistics
-      console.log(`📊 Active connections: ${activeConnections.size}, Processed transcripts: ${processedTranscripts.size}`)
-    }, 5 * 60 * 1000) // Run every 5 minutes
+      console.log(`📊 Active connections: ${activeConnections.size}, Processed transcripts: ${processedTranscripts.size}, Cleaned: ${staleSockets.length}`)
+    }, 15000) // Run every 15 seconds for faster cleanup during development
     
     console.log('✅ Server is ready to accept connections')
   } catch (error) {
