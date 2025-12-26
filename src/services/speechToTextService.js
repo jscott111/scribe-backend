@@ -187,8 +187,6 @@ class SpeechToTextService {
       throw new Error(`Failed to create recognition stream: ${error.message}`);
     }
 
-    // Track stream start time for 5-minute limit
-    const streamStartTime = Date.now();
     // Start restart 5 seconds early to allow for overlap transition
     const STREAM_DURATION_LIMIT = (4.5 * 60 * 1000) - this.PRE_RESTART_BUFFER; // 4:25 to allow 5s overlap buffer
 
