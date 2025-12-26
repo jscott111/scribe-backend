@@ -10,6 +10,11 @@ class SpeechToTextService {
     this.client = null;
     this.credentials = null;
     // Note: Client initialization is deferred to getSpeechClient() for faster startup
+    
+    // Dual-stream overlap management
+    this.overlappingStreams = new Map(); // socketId -> { oldStream, transitionStartTime }
+    this.OVERLAP_DURATION = 5000; // 5 seconds of overlap
+    this.PRE_RESTART_BUFFER = 5000; // Start new stream 5 seconds before limit
   }
 
   async initializeCredentials() {
@@ -159,13 +164,14 @@ class SpeechToTextService {
     // Frontend sends proper locale codes (en-US, fr-FR, etc.) - use directly
     console.log(`🎤 Starting Google Speech recognition with language: ${languageCode}, speechEndTimeout: ${speechEndTimeout}s`);
     
+    // Models with broad language support - 'latest_long' doesn't support all locales
+    // Use 'default' for maximum language compatibility
     const request = {
       config: {
         encoding: 'LINEAR16',
         sampleRateHertz: 48000, // Match frontend sample rate
         languageCode: languageCode,
         enableAutomaticPunctuation: true,
-        model: 'latest_long', // Use latest model for better accuracy
       },
       interimResults: true, // Get interim results for real-time display
       singleUtterance: false // Allow continuous streaming
@@ -183,12 +189,16 @@ class SpeechToTextService {
 
     // Track stream start time for 5-minute limit
     const streamStartTime = Date.now();
-    const STREAM_DURATION_LIMIT = 4.5 * 60 * 1000; // 4.5 minutes in milliseconds
+    // Start restart 5 seconds early to allow for overlap transition
+    const STREAM_DURATION_LIMIT = (0.5 * 60 * 1000) - this.PRE_RESTART_BUFFER; // 4:25 to allow 5s overlap buffer
 
     // Set up automatic restart timer
     const restartTimer = setTimeout(() => {
-      console.log('🔄 Google Cloud stream approaching 5-minute limit, restarting...');
-      if (callbacks && callbacks.onRestart) {
+      console.log('🔄 Google Cloud stream approaching 5-minute limit, initiating overlap transition...');
+      if (callbacks && callbacks.onPreRestart) {
+        // Signal that pre-emptive restart is starting (for overlap)
+        callbacks.onPreRestart();
+      } else if (callbacks && callbacks.onRestart) {
         callbacks.onRestart();
       }
     }, STREAM_DURATION_LIMIT);
@@ -248,7 +258,11 @@ class SpeechToTextService {
    */
   sendAudioToStream(recognizeStream, audioBuffer) {
     if (recognizeStream && !recognizeStream.destroyed) {
-      recognizeStream.write(audioBuffer);
+      try {
+        recognizeStream.write(audioBuffer);
+      } catch (error) {
+        console.error('❌ Error writing to stream:', error);
+      }
     } else {
       console.error('❌ Cannot send audio - stream is null or destroyed');
     }
@@ -274,6 +288,75 @@ class SpeechToTextService {
       // Mark as destroyed to prevent further use
       recognizeStream.destroyed = true;
     }
+  }
+
+  /**
+   * Start a pre-emptive stream transition with overlap
+   * This creates a new stream while keeping the old one active for a brief overlap period
+   */
+  async startOverlapTransition(socketId, oldStream, languageCode, speechEndTimeout, callbacks) {
+    console.log(`🔄 [OVERLAP] Starting pre-emptive stream transition for ${socketId}`);
+    
+    // Store the old stream in overlap map
+    this.overlappingStreams.set(socketId, {
+      oldStream: oldStream,
+      transitionStartTime: Date.now()
+    });
+    
+    // Remove error listener from old stream to prevent interference
+    if (oldStream) {
+      oldStream.removeAllListeners('error');
+      oldStream.on('error', (error) => {
+        console.log(`⚠️ [OVERLAP] Old stream error (expected during transition): ${error.message}`);
+      });
+    }
+    
+    // Create new stream
+    const newStream = await this.startStreamingRecognition(languageCode, speechEndTimeout, callbacks);
+    
+    // Schedule the old stream to close after overlap period
+    setTimeout(() => {
+      console.log(`🔄 [OVERLAP] Closing old stream after ${this.OVERLAP_DURATION}ms overlap`);
+      const overlapInfo = this.overlappingStreams.get(socketId);
+      if (overlapInfo && overlapInfo.oldStream) {
+        this.endStreamingRecognition(overlapInfo.oldStream);
+      }
+      this.overlappingStreams.delete(socketId);
+    }, this.OVERLAP_DURATION);
+    
+    return newStream;
+  }
+
+  /**
+   * Send audio to both active and overlapping streams during transition
+   */
+  sendAudioWithOverlap(socketId, activeStream, audioBuffer) {
+    // Send to main stream
+    this.sendAudioToStream(activeStream, audioBuffer);
+    
+    // Also send to overlapping stream if in transition
+    const overlapInfo = this.overlappingStreams.get(socketId);
+    if (overlapInfo && overlapInfo.oldStream && !overlapInfo.oldStream.destroyed) {
+      this.sendAudioToStream(overlapInfo.oldStream, audioBuffer);
+    }
+  }
+
+  /**
+   * Clean up any overlapping streams for a socket
+   */
+  cleanupOverlap(socketId) {
+    const overlapInfo = this.overlappingStreams.get(socketId);
+    if (overlapInfo && overlapInfo.oldStream) {
+      this.endStreamingRecognition(overlapInfo.oldStream);
+    }
+    this.overlappingStreams.delete(socketId);
+  }
+
+  /**
+   * Check if a socket is currently in overlap transition
+   */
+  isInOverlap(socketId) {
+    return this.overlappingStreams.has(socketId);
   }
 
 }
