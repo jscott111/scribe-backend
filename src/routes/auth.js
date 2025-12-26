@@ -181,7 +181,10 @@ router.post('/login', validateLogin, async (req, res) => {
         email: user.email,
         name: user.name,
         userCode: userCode,
-        createdAt: user.createdAt
+        createdAt: user.createdAt,
+        totpEnabled: user.totpEnabled,
+        totalSessions: user.totalSessions || 0,
+        totalUsageMinutes: user.totalUsageMinutes || 0
       },
       tokens: {
         accessToken,
@@ -280,7 +283,9 @@ router.get('/me', authenticateToken, async (req, res) => {
         userCode: user.userCode,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
-        totpEnabled: user.totpEnabled
+        totpEnabled: user.totpEnabled,
+        totalSessions: user.totalSessions || 0,
+        totalUsageMinutes: user.totalUsageMinutes || 0
       }
     });
   } catch (error) {
