@@ -51,6 +51,7 @@ const restartingStreams = new Map() // Track sockets that are currently restarti
 const audioBufferDuringRestart = new Map() // Buffer audio during stream restart
 const currentBubbleIds = new Map() // Track current bubbleId per socket (updated by incoming audio)
 const contentHashes = new Map() // Track content hashes for deduplication
+const typingIndicatorTimeouts = new Map() // Track typing indicator timeouts per socket
 
 // ============================================================================
 // CONTENT HASH DEDUPLICATION - Prevents duplicates from overlapping streams
@@ -656,8 +657,43 @@ io.on('connection', async (socket) => {
                     bubbleId: activeBubbleId
                   });
 
+<<<<<<< Updated upstream
                   // Handle translation for final results
                   if (result.isFinal && result.transcript.trim()) {
+=======
+                  // Notify listeners when interim results come in
+                  if (!result.isFinal && result.transcript && result.transcript.trim()) {
+                    notifyInterimTranscription(socket, sourceLanguage);
+                  }
+
+                  // Handle translation for final results
+                  if (result.isFinal && result.transcript.trim()) {
+                    // Stop typing indicator when final result comes in
+                    const currentConnection = activeConnections.get(socket.id);
+                    if (currentConnection?.userCode) {
+                      const userCodeConnections = Array.from(activeConnections.entries())
+                        .filter(([_, conn]) => conn.userCode === currentConnection.userCode)
+                        .map(([socketId, _]) => socketId);
+                      
+                      const translationConnections = userCodeConnections.filter(socketId => {
+                        const conn = activeConnections.get(socketId);
+                        return conn && !conn.isStreaming && conn.targetLanguage;
+                      });
+                      
+                      translationConnections.forEach(socketId => {
+                        const targetSocket = io.sockets.sockets.get(socketId);
+                        if (targetSocket) {
+                          targetSocket.emit('speakerTyping', { isTyping: false });
+                        }
+                      });
+                      
+                      // Clear timeout
+                      if (typingIndicatorTimeouts.has(socket.id)) {
+                        clearTimeout(typingIndicatorTimeouts.get(socket.id));
+                        typingIndicatorTimeouts.delete(socket.id);
+                      }
+                    }
+>>>>>>> Stashed changes
                     // Notify frontend that we've received a final result to prevent duplicate finalization
                     socket.emit('finalResultReceived', { bubbleId: activeBubbleId });
                     // Create a unique key based on transcript content to prevent duplicates
@@ -682,7 +718,10 @@ io.on('connection', async (socket) => {
                       }
                     }
                     
+<<<<<<< Updated upstream
                     const currentConnection = activeConnections.get(socket.id);
+=======
+>>>>>>> Stashed changes
                     if (currentConnection?.userCode) {
                       const userCodeConnections = Array.from(activeConnections.entries())
                         .filter(([_, conn]) => conn.userCode === currentConnection.userCode)
@@ -807,7 +846,42 @@ io.on('connection', async (socket) => {
                             bubbleId: activeBubbleId
                           });
 
+<<<<<<< Updated upstream
                           if (result.isFinal && result.transcript.trim()) {
+=======
+                          // Notify listeners when interim results come in
+                          if (!result.isFinal && result.transcript && result.transcript.trim()) {
+                            notifyInterimTranscription(socket, sourceLanguage);
+                          }
+
+                          if (result.isFinal && result.transcript.trim()) {
+                            // Stop typing indicator when final result comes in
+                            const currentConnection = activeConnections.get(socket.id);
+                            if (currentConnection?.userCode) {
+                              const userCodeConnections = Array.from(activeConnections.entries())
+                                .filter(([_, conn]) => conn.userCode === currentConnection.userCode)
+                                .map(([socketId, _]) => socketId);
+                              
+                              const translationConnections = userCodeConnections.filter(socketId => {
+                                const conn = activeConnections.get(socketId);
+                                return conn && !conn.isStreaming && conn.targetLanguage;
+                              });
+                              
+                              translationConnections.forEach(socketId => {
+                                const targetSocket = io.sockets.sockets.get(socketId);
+                                if (targetSocket) {
+                                  targetSocket.emit('speakerTyping', { isTyping: false });
+                                }
+                              });
+                              
+                              // Clear timeout
+                              if (typingIndicatorTimeouts.has(socket.id)) {
+                                clearTimeout(typingIndicatorTimeouts.get(socket.id));
+                                typingIndicatorTimeouts.delete(socket.id);
+                              }
+                            }
+                            
+>>>>>>> Stashed changes
                             await handleFinalTranscription(socket, result.transcript, sourceLanguage, activeBubbleId);
                           }
                         },
@@ -874,6 +948,7 @@ io.on('connection', async (socket) => {
                         bubbleId: activeBubbleId
                       });
 
+<<<<<<< Updated upstream
                       // Handle translation for final results
                       if (result.isFinal && result.transcript.trim()) {
                         // Notify frontend that we've received a final result to prevent duplicate finalization
@@ -888,6 +963,52 @@ io.on('connection', async (socket) => {
                           console.log('🔄 Skipping duplicate transcript:', result.transcript.trim());
                           return;
                         }
+=======
+                      // Notify listeners when interim results come in
+                      if (!result.isFinal && result.transcript && result.transcript.trim()) {
+                        notifyInterimTranscription(socket, sourceLanguage);
+                      }
+
+                      // Handle translation for final results
+                      if (result.isFinal && result.transcript.trim()) {
+                        // Stop typing indicator when final result comes in
+                        const currentConnection = activeConnections.get(socket.id);
+                        if (currentConnection?.userCode) {
+                          const userCodeConnections = Array.from(activeConnections.entries())
+                            .filter(([_, conn]) => conn.userCode === currentConnection.userCode)
+                            .map(([socketId, _]) => socketId);
+                          
+                          const translationConnections = userCodeConnections.filter(socketId => {
+                            const conn = activeConnections.get(socketId);
+                            return conn && !conn.isStreaming && conn.targetLanguage;
+                          });
+                          
+                          translationConnections.forEach(socketId => {
+                            const targetSocket = io.sockets.sockets.get(socketId);
+                            if (targetSocket) {
+                              targetSocket.emit('speakerTyping', { isTyping: false });
+                            }
+                          });
+                          
+                          // Clear timeout
+                          if (typingIndicatorTimeouts.has(socket.id)) {
+                            clearTimeout(typingIndicatorTimeouts.get(socket.id));
+                            typingIndicatorTimeouts.delete(socket.id);
+                          }
+                        }
+                        // Notify frontend that we've received a final result to prevent duplicate finalization
+                        socket.emit('finalResultReceived', { bubbleId: activeBubbleId });
+                        // Create a unique key based on transcript content to prevent duplicates
+                        const transcriptKey = `${socket.id}-${result.transcript.trim()}`;
+                        const currentTime = Date.now();
+                        
+                        // Check if we've already processed this exact transcript recently (within 3 seconds)
+                        const lastProcessed = processedTranscripts.get(transcriptKey);
+                        if (lastProcessed && (currentTime - lastProcessed) < 3000) {
+                          console.log('🔄 Skipping duplicate transcript:', result.transcript.trim());
+                          return;
+                        }
+>>>>>>> Stashed changes
                         
                         // Mark this transcript as processed
                         processedTranscripts.set(transcriptKey, currentTime);
@@ -900,7 +1021,10 @@ io.on('connection', async (socket) => {
                           }
                         }
                         
+<<<<<<< Updated upstream
                         const currentConnection = activeConnections.get(socket.id);
+=======
+>>>>>>> Stashed changes
                         if (currentConnection?.userCode) {
                           const userCodeConnections = Array.from(activeConnections.entries())
                             .filter(([_, conn]) => conn.userCode === currentConnection.userCode)
@@ -1284,6 +1408,12 @@ io.on('connection', async (socket) => {
     audioBufferDuringRestart.delete(socket.id)
     currentBubbleIds.delete(socket.id)
     
+    // Clean up typing indicator timeout
+    if (typingIndicatorTimeouts.has(socket.id)) {
+      clearTimeout(typingIndicatorTimeouts.get(socket.id))
+      typingIndicatorTimeouts.delete(socket.id)
+    }
+    
     // Clean up any overlapping streams
     speechToTextService.cleanupOverlap(socket.id)
     
@@ -1323,6 +1453,47 @@ io.on('connection', async (socket) => {
     emitConnectionCount(connection?.userCode)
   })
 })
+
+// Helper function to notify listeners when interim transcription is active
+function notifyInterimTranscription(socket, sourceLanguage) {
+  const currentConnection = activeConnections.get(socket.id);
+  if (!currentConnection?.userCode) return;
+  
+  const userCodeConnections = Array.from(activeConnections.entries())
+    .filter(([_, conn]) => conn.userCode === currentConnection.userCode)
+    .map(([socketId, _]) => socketId);
+  
+  const translationConnections = userCodeConnections.filter(socketId => {
+    const conn = activeConnections.get(socketId);
+    return conn && !conn.isStreaming && conn.targetLanguage;
+  });
+  
+  // Notify all listener connections that speaker is typing
+  translationConnections.forEach(socketId => {
+    const targetSocket = io.sockets.sockets.get(socketId);
+    if (targetSocket) {
+      targetSocket.emit('speakerTyping', { isTyping: true });
+    }
+  });
+  
+  // Clear existing timeout for this socket
+  if (typingIndicatorTimeouts.has(socket.id)) {
+    clearTimeout(typingIndicatorTimeouts.get(socket.id));
+  }
+  
+  // Set timeout to stop typing indicator after 2 seconds of no interim results
+  const timeout = setTimeout(() => {
+    translationConnections.forEach(socketId => {
+      const targetSocket = io.sockets.sockets.get(socketId);
+      if (targetSocket) {
+        targetSocket.emit('speakerTyping', { isTyping: false });
+      }
+    });
+    typingIndicatorTimeouts.delete(socket.id);
+  }, 2000);
+  
+  typingIndicatorTimeouts.set(socket.id, timeout);
+}
 
 // Helper function to handle final transcription processing (translation and delivery)
 async function handleFinalTranscription(socket, transcript, sourceLanguage, activeBubbleId) {
