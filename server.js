@@ -657,10 +657,6 @@ io.on('connection', async (socket) => {
                     bubbleId: activeBubbleId
                   });
 
-<<<<<<< Updated upstream
-                  // Handle translation for final results
-                  if (result.isFinal && result.transcript.trim()) {
-=======
                   // Notify listeners when interim results come in
                   if (!result.isFinal && result.transcript && result.transcript.trim()) {
                     notifyInterimTranscription(socket, sourceLanguage);
@@ -693,7 +689,6 @@ io.on('connection', async (socket) => {
                         typingIndicatorTimeouts.delete(socket.id);
                       }
                     }
->>>>>>> Stashed changes
                     // Notify frontend that we've received a final result to prevent duplicate finalization
                     socket.emit('finalResultReceived', { bubbleId: activeBubbleId });
                     // Create a unique key based on transcript content to prevent duplicates
@@ -718,10 +713,6 @@ io.on('connection', async (socket) => {
                       }
                     }
                     
-<<<<<<< Updated upstream
-                    const currentConnection = activeConnections.get(socket.id);
-=======
->>>>>>> Stashed changes
                     if (currentConnection?.userCode) {
                       const userCodeConnections = Array.from(activeConnections.entries())
                         .filter(([_, conn]) => conn.userCode === currentConnection.userCode)
@@ -846,9 +837,6 @@ io.on('connection', async (socket) => {
                             bubbleId: activeBubbleId
                           });
 
-<<<<<<< Updated upstream
-                          if (result.isFinal && result.transcript.trim()) {
-=======
                           // Notify listeners when interim results come in
                           if (!result.isFinal && result.transcript && result.transcript.trim()) {
                             notifyInterimTranscription(socket, sourceLanguage);
@@ -881,7 +869,6 @@ io.on('connection', async (socket) => {
                               }
                             }
                             
->>>>>>> Stashed changes
                             await handleFinalTranscription(socket, result.transcript, sourceLanguage, activeBubbleId);
                           }
                         },
@@ -948,22 +935,6 @@ io.on('connection', async (socket) => {
                         bubbleId: activeBubbleId
                       });
 
-<<<<<<< Updated upstream
-                      // Handle translation for final results
-                      if (result.isFinal && result.transcript.trim()) {
-                        // Notify frontend that we've received a final result to prevent duplicate finalization
-                        socket.emit('finalResultReceived', { bubbleId: activeBubbleId });
-                        // Create a unique key based on transcript content to prevent duplicates
-                        const transcriptKey = `${socket.id}-${result.transcript.trim()}`;
-                        const currentTime = Date.now();
-                        
-                        // Check if we've already processed this exact transcript recently (within 3 seconds)
-                        const lastProcessed = processedTranscripts.get(transcriptKey);
-                        if (lastProcessed && (currentTime - lastProcessed) < 3000) {
-                          console.log('🔄 Skipping duplicate transcript:', result.transcript.trim());
-                          return;
-                        }
-=======
                       // Notify listeners when interim results come in
                       if (!result.isFinal && result.transcript && result.transcript.trim()) {
                         notifyInterimTranscription(socket, sourceLanguage);
@@ -1008,7 +979,6 @@ io.on('connection', async (socket) => {
                           console.log('🔄 Skipping duplicate transcript:', result.transcript.trim());
                           return;
                         }
->>>>>>> Stashed changes
                         
                         // Mark this transcript as processed
                         processedTranscripts.set(transcriptKey, currentTime);
@@ -1021,10 +991,6 @@ io.on('connection', async (socket) => {
                           }
                         }
                         
-<<<<<<< Updated upstream
-                        const currentConnection = activeConnections.get(socket.id);
-=======
->>>>>>> Stashed changes
                         if (currentConnection?.userCode) {
                           const userCodeConnections = Array.from(activeConnections.entries())
                             .filter(([_, conn]) => conn.userCode === currentConnection.userCode)
